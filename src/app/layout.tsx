@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { Analytics } from '@vercel/analytics/react';
 
-const SITE_URL = "https://geospatialcommand.center";
-const SITE_NAME = "Third Eye";
-const SITE_TITLE = "Third Eye — Open Source Intelligence Platform | Live Flight Tracking, CCTV, OSINT Tools & More";
-const SITE_DESCRIPTION = "The open-source Palantir alternative. Track 10,000+ aircraft, 2,000 satellites, and worldwide CCTV cameras in real-time on a 3D globe. Run Nmap scans, DNS lookups, WHOIS queries, SSL cert analysis & threat intelligence — all from your browser. 20+ live data feeds including earthquakes, wildfires, nuclear facilities, cyber threats, and global conflicts. Free & open source.";
+const SITE_URL = "https://grayzonemonitor.com";
+const SITE_NAME = "Gray Zone Monitor";
+const SITE_TITLE = "Gray Zone Monitor — AI-Powered Geopolitical Intelligence Platform";
+const SITE_DESCRIPTION = "Real-time gray zone threat monitoring platform. Temporal knowledge graph with 78 vertex types, 55 edge types, 137 collectors, convergence scoring, and zero-shot prediction. Detects hybrid warfare, sanctions evasion, and covert military operations 3-14 days before conventional analysis.";
 
 export const viewport: Viewport = {
   themeColor: "#D4AF37",
@@ -18,44 +19,38 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
     default: SITE_TITLE,
-    template: "%s | Third Eye Intelligence",
+    template: "%s | Gray Zone Monitor",
   },
   description: SITE_DESCRIPTION,
   keywords: [
-    // OSINT Tools - Primary focus
-    "OSINT tools", "free OSINT tools", "online OSINT toolkit", "OSINT framework",
-    "nmap online", "nmap scanner online", "free nmap scan", "port scanner online",
-    "DNS lookup tool", "WHOIS lookup", "reverse DNS", "DNS records",
-    "SSL certificate checker", "certificate transparency", "cert lookup",
-    "BGP routing lookup", "ASN lookup", "IP geolocation",
-    "threat intelligence", "threat intel lookup", "IP reputation check",
-    "network reconnaissance", "recon tools", "penetration testing tools",
-    "cybersecurity tools", "infosec tools", "security scanner",
-    "linux OSINT tools", "kali linux tools online", "OSINT browser tools",
+    // Core domain
+    "gray zone", "grey zone", "hybrid warfare", "irregular warfare",
+    "geopolitical intelligence", "geopolitical risk", "conflict prediction",
+    "OSINT", "open source intelligence", "threat intelligence",
+    "situational awareness", "convergence analysis",
     
-    // Intelligence Platform
-    "OSINT", "open source intelligence", "intelligence platform", "global intelligence",
-    "geospatial intelligence", "GEOINT", "SIGINT", "real-time tracking",
-    "palantir alternative", "open source palantir", "intelligence dashboard",
+    // Technical capabilities
+    "knowledge graph", "temporal graph", "TigerGraph",
+    "machine learning", "zero-shot prediction", "TabFM",
+    "AIS tracking", "maritime intelligence", "dark fleet detection",
+    "sanctions evasion", "entity resolution", "network analysis",
     
-    // Tracking & Data
-    "flight tracker", "aircraft tracking", "ADS-B tracker", "live flight radar",
-    "satellite tracking", "ISS tracker", "space station tracker",
-    "CCTV cameras live", "security cameras worldwide", "live cameras",
-    "earthquake monitor", "seismic activity", "USGS earthquake",
-    "wildfire tracker", "NASA FIRMS", "active fires",
-    "nuclear facilities map", "nuclear power plants",
-    "severe weather alerts", "weather radar",
-    "cyber threats dashboard", "CVE tracker",
-    "space weather", "solar storm", "GPS jamming",
-    "defense stocks", "commodities tracker",
+    // Data domains
+    "conflict monitoring", "ACLED", "arms transfers",
+    "cyber threat intelligence", "supply chain risk",
+    "maritime chokepoints", "country instability index",
+    "cascade modeling", "scenario analysis",
+    
+    // Competitors/positioning
+    "palantir alternative", "recorded future alternative",
+    "open source intelligence platform", "defense intelligence",
     
     // Brand
-    "third eye", "thirdeye", "geospatialcommand.center",
+    "gray zone monitor", "GZM", "grayzonemonitor",
   ],
-  authors: [{ name: "Third Eye Project", url: SITE_URL }],
-  creator: "Third Eye Project",
-  publisher: "Third Eye Project",
+  authors: [{ name: "Connor Vandenberg", url: SITE_URL }],
+  creator: "Connor Vandenberg",
+  publisher: "Gray Zone Monitor",
   robots: {
     index: true,
     follow: true,
@@ -71,27 +66,19 @@ export const metadata: Metadata = {
     icon: [
       { url: "/favicon-32x32.png", type: "image/png", sizes: "32x32" },
       { url: "/favicon-16x16.png", type: "image/png", sizes: "16x16" },
-      { url: "/android-chrome-192x192.png", type: "image/png", sizes: "192x192" },
-      { url: "/android-chrome-512x512.png", type: "image/png", sizes: "512x512" },
     ],
     apple: [
       { url: "/apple-touch-icon.png", sizes: "180x180" },
     ],
     shortcut: "/favicon.ico",
-    other: [
-      {
-        rel: "apple-touch-icon-precomposed",
-        url: "/apple-touch-icon.png",
-      },
-    ],
   },
   manifest: "/site.webmanifest",
   alternates: {
     canonical: SITE_URL,
   },
   openGraph: {
-    title: "Third Eye — The Open-Source Palantir Alternative | Live Flights, CCTV, Satellites & OSINT Tools",
-    description: "Track 10K+ aircraft, 2K satellites & worldwide CCTV on a 3D globe. Run Nmap, DNS, WHOIS & threat intel scans from your browser. 20+ live intelligence feeds. Free. Open source.",
+    title: "Gray Zone Monitor — AI-Powered Geopolitical Intelligence Platform",
+    description: "Temporal knowledge graph platform detecting hybrid warfare and gray zone escalation 3-14 days before conventional analysis. 137 collectors, 94 engines, 10 graph algorithms.",
     type: "website",
     siteName: SITE_NAME,
     locale: "en_US",
@@ -101,17 +88,15 @@ export const metadata: Metadata = {
         url: `${SITE_URL}/og-image.png`,
         width: 1200,
         height: 630,
-        alt: "Third Eye — Open Source Intelligence Platform with Live Tracking & OSINT Tools",
+        alt: "Gray Zone Monitor — Geopolitical Intelligence Platform",
         type: "image/png",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "🛰️ Third Eye — Open Source Palantir Alternative | Live Tracking + OSINT Tools",
-    description: "Track 10K+ flights, satellites & CCTV worldwide. Run Nmap, DNS, WHOIS scans from your browser. 20+ live intel feeds. Free & open source.",
-    creator: "@thirdeyelive",
-    site: "@thirdeyelive",
+    title: "Gray Zone Monitor — Predicts Geopolitical Escalation Before It Happens",
+    description: "Temporal knowledge graph + 137 OSINT collectors + zero-shot prediction. Detects gray zone threats 3-14 days early.",
     images: [`${SITE_URL}/og-image.png`],
   },
   category: "technology",
@@ -119,7 +104,7 @@ export const metadata: Metadata = {
   other: {
     "apple-mobile-web-app-capable": "yes",
     "apple-mobile-web-app-status-bar-style": "black-translucent",
-    "apple-mobile-web-app-title": "Third Eye",
+    "apple-mobile-web-app-title": "GZM",
     "mobile-web-app-capable": "yes",
     "msapplication-TileColor": "#06060C",
     "msapplication-config": "none",
@@ -130,8 +115,8 @@ export const metadata: Metadata = {
 const jsonLd = {
   "@context": "https://schema.org",
   "@type": "WebApplication",
-  name: "Third Eye — OSINT Toolkit & Intelligence Platform",
-  alternateName: ["Third Eye", "ThirdEye", "Third Eye OSINT"],
+  name: "Gray Zone Monitor",
+  alternateName: ["GZM", "Gray Zone Monitor", "Grey Zone Monitor"],
   url: SITE_URL,
   description: SITE_DESCRIPTION,
   applicationCategory: "SecurityApplication",
@@ -144,31 +129,25 @@ const jsonLd = {
     availability: "https://schema.org/InStock",
   },
   featureList: [
-    "Nmap port scanning from the browser — no install required",
-    "DNS record lookup (A, AAAA, MX, NS, TXT, CNAME)",
-    "WHOIS domain registration lookup",
-    "SSL/TLS certificate transparency search",
-    "BGP routing & ASN lookup",
-    "IP geolocation & threat intelligence",
-    "Real-time flight tracking (10,000+ aircraft via ADS-B)",
-    "Satellite tracking (2,000+ objects including ISS)",
-    "Worldwide CCTV camera monitoring (1,400+ feeds)",
-    "Earthquake monitoring (USGS live feed)",
-    "Wildfire detection (NASA FIRMS satellite data)",
-    "Nuclear facility mapping (worldwide)",
-    "Severe weather alerts & tracking",
-    "Cyber threat & CVE intelligence",
-    "Space weather & solar storm monitoring",
-    "GPS jamming detection",
-    "Defense & commodity market tracking",
-    "SIGINT news aggregation feed",
-    "Interactive 3D globe with day/night cycle",
-    "Region intelligence dossier reports",
+    "Country Instability Index (CII) for 195 countries with z-score normalization",
+    "Multi-domain convergence detection (maritime + cyber + financial + diplomatic + military)",
+    "Temporal knowledge graph (78 vertex types, 55 edge types, Weibull decay)",
+    "Zero-shot prediction via TabICL foundation model",
+    "137 automated OSINT collectors across 30+ domains",
+    "SIR epidemic cascade modeling with Monte Carlo simulation",
+    "Maritime chokepoint risk assessment with live AIS integration",
+    "Dark web intelligence via VoidAccess + STIX 2.1",
+    "3-tier alerting (FLASH/PRIORITY/ROUTINE) with semantic deduplication",
+    "LLM-powered intelligence briefings (Claude, GPT, Ollama)",
+    "10 installed TigerGraph algorithms (PageRank, Betweenness, Louvain, etc.)",
+    "MCP server with 41 tools (stdio + Streamable HTTP)",
+    "Interactive 3D globe with MapLibre GL (60fps WebGL)",
+    "Entity relationship graph visualization",
   ],
   screenshot: `${SITE_URL}/og-image.png`,
   author: {
-    "@type": "Organization",
-    name: "Third Eye Project",
+    "@type": "Person",
+    name: "Connor Vandenberg",
     url: SITE_URL,
   },
 };
@@ -199,9 +178,10 @@ export default function RootLayout({
 
       </head>
       <body className="antialiased">
-        <ErrorBoundary name="Third Eye Core">
+        <ErrorBoundary name="Gray Zone Monitor">
           {children}
         </ErrorBoundary>
+        <Analytics />
       </body>
     </html>
   );
