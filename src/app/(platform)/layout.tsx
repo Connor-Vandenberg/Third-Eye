@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { NAV_ITEMS, NAV_BOTTOM } from '@/lib/constants';
 import { useStats } from '@/lib/queries';
 import { useWebSocket } from '@/providers/websocket-provider';
+import { SecurityInit } from './security-init';
 
 export default function PlatformLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -62,6 +63,9 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
       overflow: 'hidden',
       background: 'var(--surface-0)',
     }}>
+      {/* SECURITY INITIALIZATION */}
+      <SecurityInit />
+
       {/* TOP BAR */}
       <header style={{
         gridColumn: '1 / -1',
@@ -73,7 +77,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
         padding: '0 20px',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {/* GZM Logo */}
+          {/* GZM Crosshair Logo */}
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="10" stroke="var(--accent)" strokeWidth="1.5" />
             <circle cx="12" cy="12" r="4" fill="var(--accent)" />
@@ -89,14 +93,6 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
             letterSpacing: '0.08em',
             color: 'var(--accent)',
           }}>GRAY ZONE MONITOR</span>
-          <span style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '10px',
-            color: 'var(--text-muted)',
-            background: 'var(--surface-2)',
-            padding: '2px 8px',
-            borderRadius: '3px',
-          }}>v4.1</span>
         </div>
 
         {/* Live Stats */}
@@ -211,7 +207,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
               }}
             >
               {item.icon.charAt(0).toUpperCase()}
-              {/* Alert badge on bell icon */}
+              {/* Alert badge */}
               {item.id === 'alerts' && alertCount > 0 && (
                 <span style={{
                   position: 'absolute',
