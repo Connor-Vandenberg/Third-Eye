@@ -1,37 +1,56 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { gzmApi, type GZMAlert, type AlertsResponse } from '@/lib/api';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { gzmApi, type GZMAlert, type Severity } from '@/lib/api';
+import { gzmWs, type WsMessage, type WsAlert } from '@/lib/websocket';
 
-const SEVERITY_STYLES: Record<string, { border: string; badge: string; icon: string }> = {
-  critical: { border: '#ef4444', badge: 'bg-red-500/20 text-red-400', icon: '🔴' },
-  high: { border: '#f59e0b', badge: 'bg-amber-500/20 text-amber-400', icon: '🟠' },
-  medium: { border: '#eab308', badge: 'bg-yellow-500/20 text-yellow-400', icon: '🟡' },
-  low: { border: '#22c55e', badge: 'bg-emerald-500/20 text-emerald-400', icon: '🟢' },
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+
+const SEVERITY_CONFIG: Record<string, { color: string; bg: string; icon: string; priority: number }> = {
+  critical: { color: '#ef4444', bg: 'rgba(239,68,68,0.08)', icon: '\u{1F534}', priority: 0 },
+  high:     { color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', icon: '\u{1F7E0}', priority: 1 },
+  medium:   { color: '#eab308', bg: 'rgba(234,179,8,0.06)',  icon: '\u{1F7E1}', priority: 2 },
+  low:      { color: '#10b981', bg: 'rgba(16,185,129,0.06)', icon: '\u{1F7E2}', priority: 3 },
 };
+
+type ViewMode = 'feed' | 'grid' | 'compact';
+type FilterSeverity = 'all' | Severity;
+
+// ═══════════════════════════════════════════════════════════════
+// COMPONENT
+// ═══════════════════════════════════════════════════════════════
 
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<GZMAlert[]>([]);
-  const [stats, setStats] = useState({ total: 0, critical: 0, high: 0 });
+  const [stats, setStats] = useState({ total: 0, critical: 0, high: 0, medium: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterSeverity>('all');
+  const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('feed');
+  const [wsConnected, setWsConnected] = useState(false);
 
+  // ─── Initial fetch ───────────────────────────────────────────
   const fetchAlerts = useCallback(async () => {
     try {
-      const data = await gzmApi.alerts(100);
+      const data = await gzmApi.alerts(200);
       if (data) {
         setAlerts(data.alerts || []);
+        const all = data.alerts || [];
         setStats({
-          total: data.active_alerts || data.alerts?.length || 0,
-          critical: data.critical || data.alerts?.filter(a => a.severity === 'critical').length || 0,
-          high: data.high || data.alerts?.filter(a => a.severity === 'high').length || 0,
+          total: data.active_alerts || all.length,
+          critical: data.critical || all.filter(a => a.severity === 'critical').length,
+          high: data.high || all.filter(a => a.severity === 'high').length,
+          medium: all.filter(a => a.severity === 'medium').length,
         });
         setError(null);
       } else {
-        setError('Backend unavailable. Start FastAPI: python -m api.app');
+        setError('Backend unavailable. Run: python -m api.app');
       }
     } catch {
-      setError('Failed to connect to GZM backend');
+      setError('Connection failed');
     } finally {
       setLoading(false);
     }
@@ -39,126 +58,262 @@ export default function AlertsPage() {
 
   useEffect(() => {
     fetchAlerts();
-    const interval = setInterval(fetchAlerts, 30000);
+    const interval = setInterval(fetchAlerts, 60000);
     return () => clearInterval(interval);
   }, [fetchAlerts]);
 
-  // WebSocket for real-time updates
+  // ─── WebSocket live updates ──────────────────────────────────
   useEffect(() => {
-    let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket(gzmApi.alertsWsUrl());
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'alert') {
-            setAlerts((prev) => [
-              {
-                vertex_id: msg.alert_id || msg.entity,
-                name: msg.entity || msg.name,
-                severity: msg.severity || 'medium',
-                score: msg.convergence_score || msg.score,
-                country: msg.country,
-                vertex_type: msg.vertex_type,
-              },
-              ...prev.slice(0, 99),
-            ]);
-            setStats((s) => ({ ...s, total: s.total + 1 }));
-          }
-        } catch { /* ignore parse errors */ }
-      };
-    } catch { /* WebSocket not available */ }
-    return () => { ws?.close(); };
+    const unsub = gzmWs.subscribe((msg: WsMessage) => {
+      if (msg.type === '_state_connected') setWsConnected(true);
+      if (msg.type === '_state_disconnected') setWsConnected(false);
+      if (msg.type === 'alert') {
+        const a = msg as WsAlert;
+        const newAlert: GZMAlert = {
+          vertex_id: a.alert_id || a.entity || String(Date.now()),
+          name: a.entity || a.name,
+          severity: (a.severity as Severity) || 'medium',
+          score: a.convergence_score || a.score,
+          country: a.country,
+          vertex_type: a.vertex_type,
+          domain_count: a.domain_count,
+          created_at: a.created_at || new Date().toISOString(),
+        };
+        setAlerts(prev => [newAlert, ...prev.slice(0, 199)]);
+        setStats(s => ({
+          ...s,
+          total: s.total + 1,
+          critical: s.critical + (newAlert.severity === 'critical' ? 1 : 0),
+          high: s.high + (newAlert.severity === 'high' ? 1 : 0),
+        }));
+      }
+      if (msg.type === 'heartbeat') {
+        const hb = msg as { active_alerts?: number; critical?: number };
+        if (hb.active_alerts != null) setStats(s => ({ ...s, total: hb.active_alerts! }));
+      }
+    });
+    return unsub;
   }, []);
 
+  // ─── Filtered + searched alerts ──────────────────────────────
+  const displayed = useMemo(() => {
+    let result = alerts;
+    if (filter !== 'all') {
+      result = result.filter(a => (a.severity || 'low') === filter);
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(a =>
+        (a.name || '').toLowerCase().includes(q) ||
+        (a.entity_name || '').toLowerCase().includes(q) ||
+        (a.country || '').toLowerCase().includes(q) ||
+        (a.vertex_type || '').toLowerCase().includes(q)
+      );
+    }
+    // Sort by severity priority, then recency
+    return result.sort((a, b) => {
+      const pa = SEVERITY_CONFIG[(a.severity || 'low')]?.priority ?? 3;
+      const pb = SEVERITY_CONFIG[(b.severity || 'low')]?.priority ?? 3;
+      return pa - pb;
+    });
+  }, [alerts, filter, search]);
+
+  // ─── Score bar visualization ─────────────────────────────────
+  const ScoreBar = ({ score }: { score?: number }) => {
+    const pct = Math.min(100, (score || 0) * 100);
+    const color = pct > 70 ? '#ef4444' : pct > 40 ? '#f59e0b' : '#10b981';
+    return (
+      <div className="flex items-center gap-2">
+        <div className="w-16 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+        </div>
+        <span className="text-[10px] font-mono tabular-nums" style={{ color }}>{pct.toFixed(0)}%</span>
+      </div>
+    );
+  };
+
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-6 max-w-7xl mx-auto">
+      {/* ─── Header ─────────────────────────────────────────── */}
+      <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-white">Convergence Alerts</h1>
-          <p className="text-[13px] text-[rgba(240,240,255,0.5)] mt-1">
-            Real-time intelligence alerts from 146+ collectors across 18 domains
+          <h1 className="text-[20px] font-bold text-white tracking-tight">Convergence Alerts</h1>
+          <p className="text-[12px] mt-1" style={{ color: 'rgba(240,240,255,0.45)' }}>
+            Multi-domain intelligence convergence from 146+ collectors \u00b7 3-tier Dempster-Shafer fusion
           </p>
         </div>
-        <div className="flex gap-3">
-          <div className="px-3 py-1.5 rounded-md text-[11px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
-            {stats.critical} CRITICAL
-          </div>
-          <div className="px-3 py-1.5 rounded-md text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-            {stats.high} HIGH
-          </div>
-          <div className="px-3 py-1.5 rounded-md text-[11px] font-bold bg-[rgba(34,211,238,0.1)] text-cyan-400 border border-cyan-500/20">
-            {stats.total} TOTAL
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ background: wsConnected ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)', border: `1px solid ${wsConnected ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
+            <div className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
+            <span className="text-[9px] font-bold" style={{ color: wsConnected ? '#10b981' : '#ef4444' }}>
+              {wsConnected ? 'LIVE' : 'POLLING'}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Error State */}
+      {/* ─── Stats Row ──────────────────────────────────────── */}
+      <div className="flex gap-3 mb-5">
+        {[
+          { label: 'CRITICAL', count: stats.critical, color: '#ef4444' },
+          { label: 'HIGH', count: stats.high, color: '#f59e0b' },
+          { label: 'MEDIUM', count: stats.medium, color: '#eab308' },
+          { label: 'TOTAL', count: stats.total, color: '#22d3ee' },
+        ].map(({ label, count, color }) => (
+          <button
+            key={label}
+            onClick={() => setFilter(label === 'TOTAL' ? 'all' : label.toLowerCase() as FilterSeverity)}
+            className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide transition-all ${
+              (filter === label.toLowerCase() || (filter === 'all' && label === 'TOTAL'))
+                ? 'ring-1'
+                : 'opacity-70 hover:opacity-100'
+            }`}
+            style={{
+              background: `${color}10`,
+              color,
+              border: `1px solid ${color}30`,
+              ...(filter === label.toLowerCase() || (filter === 'all' && label === 'TOTAL')
+                ? { ringColor: color }
+                : {}),
+            }}
+          >
+            {count} {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ─── Search + View Toggle ───────────────────────────── */}
+      <div className="flex gap-3 mb-5">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter by entity, country, type..."
+          className="flex-1 px-4 py-2 rounded-lg text-[12px] text-white placeholder:text-[rgba(240,240,255,0.25)] outline-none focus:ring-1 focus:ring-cyan-500/40 transition-shadow"
+          style={{ background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.06)' }}
+        />
+        <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+          {(['feed', 'grid', 'compact'] as ViewMode[]).map(mode => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              className={`px-3 py-2 text-[10px] font-bold uppercase ${
+                viewMode === mode ? 'text-cyan-400' : 'text-[rgba(240,240,255,0.3)]'
+              }`}
+              style={{ background: viewMode === mode ? 'rgba(34,211,238,0.06)' : '#0f0f1a' }}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ─── Error ──────────────────────────────────────────── */}
       {error && (
-        <div className="mb-4 p-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
-          <p className="text-[13px] text-amber-400">⚠️ {error}</p>
+        <div className="mb-4 p-4 rounded-lg" style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)' }}>
+          <p className="text-[12px] text-amber-400">\u26A0\uFE0F {error}</p>
         </div>
       )}
 
-      {/* Loading State */}
+      {/* ─── Loading ────────────────────────────────────────── */}
       {loading && (
-        <div className="flex items-center justify-center py-20">
-          <div className="text-[13px] text-[rgba(240,240,255,0.4)] animate-pulse">
+        <div className="flex items-center justify-center py-24">
+          <div className="text-[12px] animate-pulse" style={{ color: 'rgba(240,240,255,0.35)' }}>
             Connecting to GZM backend...
           </div>
         </div>
       )}
 
-      {/* Alert List */}
-      {!loading && alerts.length === 0 && !error && (
-        <div className="text-center py-20">
-          <p className="text-[14px] text-[rgba(240,240,255,0.4)]">No active alerts</p>
-          <p className="text-[12px] text-[rgba(240,240,255,0.25)] mt-2">Run the pipeline to generate convergence alerts</p>
+      {/* ─── Empty ──────────────────────────────────────────── */}
+      {!loading && displayed.length === 0 && !error && (
+        <div className="text-center py-24">
+          <p className="text-[14px]" style={{ color: 'rgba(240,240,255,0.4)' }}>No alerts match current filters</p>
+          <p className="text-[11px] mt-2" style={{ color: 'rgba(240,240,255,0.2)' }}>
+            Run the pipeline to generate convergence alerts: python run_all_v2.py
+          </p>
         </div>
       )}
 
-      <div className="space-y-2">
-        {alerts.map((alert, i) => {
+      {/* ─── Alert List ─────────────────────────────────────── */}
+      <div className={viewMode === 'grid' ? 'grid grid-cols-2 gap-3' : 'space-y-2'}>
+        {displayed.map((alert, i) => {
           const sev = (alert.severity || 'low').toLowerCase();
-          const style = SEVERITY_STYLES[sev] || SEVERITY_STYLES.low;
+          const config = SEVERITY_CONFIG[sev] || SEVERITY_CONFIG.low;
+
+          if (viewMode === 'compact') {
+            return (
+              <div
+                key={alert.vertex_id || i}
+                className="flex items-center gap-3 px-3 py-1.5 rounded text-[11px] hover:bg-[rgba(255,255,255,0.02)] transition-colors"
+                style={{ borderLeft: `2px solid ${config.color}` }}
+              >
+                <span className="font-medium text-white truncate flex-1">
+                  {alert.name || alert.entity_name || alert.vertex_id}
+                </span>
+                <span style={{ color: config.color }} className="text-[9px] font-bold uppercase">{sev}</span>
+                {alert.country && <span className="text-[rgba(240,240,255,0.3)]">{alert.country}</span>}
+                <ScoreBar score={alert.score || alert.convergence_score} />
+              </div>
+            );
+          }
+
           return (
             <div
               key={alert.vertex_id || i}
-              className="flex items-start gap-4 p-4 rounded-lg border transition-colors hover:bg-[rgba(255,255,255,0.02)]"
+              className="flex items-start gap-4 p-4 rounded-lg transition-all hover:translate-x-0.5"
               style={{
-                background: '#0f0f1a',
-                borderColor: 'rgba(255,255,255,0.06)',
+                background: config.bg,
+                border: '1px solid rgba(255,255,255,0.04)',
                 borderLeftWidth: '3px',
-                borderLeftColor: style.border,
+                borderLeftColor: config.color,
               }}
             >
-              <span className="text-lg flex-shrink-0 mt-0.5">{style.icon}</span>
+              <span className="text-[16px] flex-shrink-0 mt-0.5">{config.icon}</span>
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[14px] font-semibold text-white truncate">
-                    {alert.name || alert.entity_name || alert.vertex_id || 'Unknown Entity'}
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[13px] font-semibold text-white truncate">
+                    {alert.name || alert.entity_name || alert.vertex_id || 'Unknown'}
                   </span>
-                  <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${style.badge}`}>
+                  <span
+                    className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded"
+                    style={{ background: `${config.color}20`, color: config.color }}
+                  >
                     {sev}
                   </span>
+                  {alert.domain_count && alert.domain_count > 1 && (
+                    <span className="text-[8px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.1)', color: '#6366f1' }}>
+                      {alert.domain_count} domains
+                    </span>
+                  )}
                 </div>
-                <div className="flex items-center gap-3 text-[11px] text-[rgba(240,240,255,0.4)]">
-                  {alert.vertex_type && <span>Type: {alert.vertex_type}</span>}
-                  {alert.country && <span>📍 {alert.country}</span>}
-                  {alert.score != null && <span>Score: {(alert.score * 100).toFixed(0)}%</span>}
-                  {alert.source && <span>Source: {alert.source}</span>}
+                <div className="flex items-center gap-4 text-[10px]" style={{ color: 'rgba(240,240,255,0.4)' }}>
+                  {alert.vertex_type && <span>{alert.vertex_type}</span>}
+                  {alert.country && <span>\u{1F4CD} {alert.country}</span>}
+                  {alert.source && <span>via {alert.source}</span>}
                 </div>
+                {(alert.score != null || alert.convergence_score != null) && (
+                  <div className="mt-2">
+                    <ScoreBar score={alert.score || alert.convergence_score} />
+                  </div>
+                )}
               </div>
               {alert.created_at && (
-                <span className="text-[10px] text-[rgba(240,240,255,0.3)] font-mono flex-shrink-0">
-                  {alert.created_at}
+                <span className="text-[9px] font-mono tabular-nums flex-shrink-0" style={{ color: 'rgba(240,240,255,0.25)' }}>
+                  {alert.created_at.substring(11, 19) || alert.created_at}
                 </span>
               )}
             </div>
           );
         })}
       </div>
+
+      {/* ─── Footer Stats ───────────────────────────────────── */}
+      {!loading && displayed.length > 0 && (
+        <div className="mt-6 pt-4 flex items-center justify-between text-[10px]" style={{ borderTop: '1px solid rgba(255,255,255,0.04)', color: 'rgba(240,240,255,0.25)' }}>
+          <span>Showing {displayed.length} of {alerts.length} alerts</span>
+          <span>Refresh: {wsConnected ? 'real-time via WebSocket' : 'polling every 60s'}</span>
+        </div>
+      )}
     </div>
   );
 }
