@@ -68,7 +68,8 @@ export default function MarketsPanel({ data, spaceWeather }: MarketsPanelProps) 
 
   const content = (
     <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.6, duration: 0.6 }} className={`glass-panel p-3 pointer-events-auto transition-all duration-300 flex flex-col ${maximized ? 'fixed inset-4 z-[9999] bg-[#0a0a09]/95 backdrop-blur-3xl' : ''}`}>
-      <button onClick={() => setExpanded(!expanded)} className="flex items-center justify-between w-full mb-2">
+      {/* Header bar: uses div instead of button to avoid nested button issue */}
+      <div onClick={() => setExpanded(!expanded)} className="flex items-center justify-between w-full mb-2 cursor-pointer" role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setExpanded(!expanded); }}>
         <div className="flex items-center gap-2">
           <BarChart3 className="w-3.5 h-3.5 text-[var(--gold-primary)]" />
           <span className="hud-text text-[12px] text-[var(--text-primary)]">MARKETS & INTEL</span>
@@ -81,7 +82,7 @@ export default function MarketsPanel({ data, spaceWeather }: MarketsPanelProps) 
           </button>
           {expanded ? <ChevronUp className="w-3.5 h-3.5 text-[var(--text-muted)]" /> : <ChevronDown className="w-3.5 h-3.5 text-[var(--text-muted)]" />}
         </div>
-      </button>
+      </div>
 
       <AnimatePresence>
         {expanded && (
@@ -106,7 +107,7 @@ export default function MarketsPanel({ data, spaceWeather }: MarketsPanelProps) 
               </div>
             )}
 
-            {/* Section Tabs — icons instead of emojis */}
+            {/* Section Tabs */}
             <div className="flex gap-0.5 mb-2 overflow-x-auto">
               {SECTIONS.map(s => {
                 const Icon = s.icon;
