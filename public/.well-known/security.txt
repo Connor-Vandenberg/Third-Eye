@@ -1,0 +1,22 @@
+# Gray Zone Monitor Security Policy
+# RFC 9116 (https://www.rfc-editor.org/rfc/rfc9116)
+# This file is hosted at https://grayzonemonitor.com/.well-known/security.txt
+
+Contact: mailto:security@grayzonemonitor.com
+Expires: 2027-07-24T23:59:00.000Z
+Preferred-Languages: en
+Canonical: https://grayzonemonitor.com/.well-known/security.txt
+Policy: https://grayzonemonitor.com/security-policy
+Hiring: https://grayzonemonitor.com/careers
+
+# If you discover a vulnerability in Gray Zone Monitor, please report it
+# to security@grayzonemonitor.com. We will acknowledge receipt within
+# 48 hours and provide an initial assessment within 7 business days.
+#
+# We do not pursue legal action against security researchers who:
+# - Make a good faith effort to avoid privacy violations
+# - Avoid destruction of data or degradation of services
+# - Do not exploit vulnerabilities beyond what is necessary to confirm them
+# - Report findings to us before public disclosure
+#
+# We commit to coordinated disclosure (90-day timeline from report).

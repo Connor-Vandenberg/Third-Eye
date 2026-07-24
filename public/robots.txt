@@ -1,17 +1,23 @@
-# ThirdEye Global Intelligence Platform
-# https://geospatialcommand.center
+# Gray Zone Monitor — robots.txt
+# Allow search engines to index legal/accessibility pages
+# Restrict application data endpoints
 
 User-agent: *
 Allow: /
+Allow: /legal/
+Allow: /legal/privacy
+Allow: /legal/terms
+Allow: /legal/accessibility
+Allow: /legal/do-not-sell
+Allow: /.well-known/security.txt
+
+# Disallow application internals
 Disallow: /api/
-Disallow: /api/scanner
-Disallow: /api/osint/*
+Disallow: /dashboard/
+Disallow: /graph/
+Disallow: /map/
+Disallow: /entities/
+Disallow: /settings/
+Disallow: /reports/
 
-# Allow search engines to index the main page
-Allow: /api/health
-
-# Sitemap
-Sitemap: https://geospatialcommand.center/sitemap.xml
-
-# Crawl-delay for respectful indexing
-Crawl-delay: 10
+Sitemap: https://grayzonemonitor.com/sitemap.xml
