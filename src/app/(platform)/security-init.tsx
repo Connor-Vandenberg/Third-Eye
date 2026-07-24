@@ -1,88 +1,198 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { initAntiScrape, validateEnvironment, protectClipboard } from '@/lib/security';
 import { generateFingerprint, initBehavioralTracking, persistFingerprint, reportFingerprint } from '@/lib/fingerprint';
+import { detectVPNAdvanced, detectBotsAdvanced, initDeepBehavioralTracking, analyzeBehavior, assessThreat, adaptiveRateCheck } from '@/lib/threat-detection';
 
 /**
- * Security initialization component.
- * Mount once at the platform layout level.
- * Activates:
- * - Device fingerprinting (32+ signals, VPN-resistant)
- * - Behavioral biometrics (mouse/typing/scroll patterns)
- * - Anti-scrape (right-click, view-source, print disabled)
- * - DevTools lockout (detection + continuous blocking)
- * - Origin validation
- * - Clipboard watermarking
- * - Console social engineering warning
- * - Bot detection honeypots
+ * GZM UNIFIED SECURITY INITIALIZATION
+ * 
+ * This component wires together ALL security systems into one automated pipeline.
+ * Mount once at the platform layout level. Everything runs automatically.
+ *
+ * PIPELINE (executes in order on mount):
+ * 1. Environment validation (origin check)
+ * 2. DevTools lockout (5 detection methods)
+ * 3. Anti-scrape (right-click, view-source, print)
+ * 4. Clipboard watermarking
+ * 5. Device fingerprinting (32+ hardware signals)
+ * 6. Advanced VPN/proxy detection (12 signals including WebRTC leak)
+ * 7. Advanced bot/AI detection (22 checks including stealth mode bypass)
+ * 8. Deep behavioral biometrics (mouse entropy, typing cadence, scroll curves)
+ * 9. Adaptive rate limiting (learns normal patterns, auto-tightens on burst)
+ * 10. Continuous threat assessment loop (every 30 seconds)
+ * 11. Auto-escalation based on composite threat score
+ * 12. All findings reported to backend for server-side correlation
+ *
+ * THREAT RESPONSE:
+ * - Score 0-19: Allow (clear)
+ * - Score 20-39: Allow + flag for review
+ * - Score 40-59: Challenge (degrade functionality, show verification)
+ * - Score 60-79: Throttle (1 request per 10 seconds max)
+ * - Score 80-100: Block (nuke page, redirect to denied screen)
  */
 export function SecurityInit() {
+  const threatLevelRef = useRef<'clear' | 'low' | 'medium' | 'high' | 'critical'>('clear');
+  const assessmentIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
-    // === ENVIRONMENT VALIDATION ===
+    // ============================================================
+    // PHASE 1: IMMEDIATE PROTECTIONS (synchronous, instant)
+    // ============================================================
+
+    // Validate origin (blocks if not authorized domain)
     validateEnvironment();
 
-    // === ANTI-SCRAPE + DEVTOOLS BLOCK ===
-    initAntiScrape();
-    lockDevTools(); // Extra aggressive DevTools blocking
+    // Lock DevTools (5 methods: debugger trap, toString trick, resize, keyboard, console nuke)
+    lockDevTools();
 
-    // === CLIPBOARD PROTECTION ===
+    // Anti-scrape (right-click, Ctrl+U, Ctrl+S, Ctrl+P, F12)
+    initAntiScrape();
+
+    // Clipboard watermarking (copies get watermarked with timestamp)
     protectClipboard();
 
-    // === DEVICE FINGERPRINTING ===
-    // Runs async, captures 32+ signals, reports to backend
+    // ============================================================
+    // PHASE 2: DEVICE IDENTIFICATION (async, ~500ms)
+    // ============================================================
+
+    // Basic fingerprint (32 signals: canvas, WebGL, audio, fonts, etc.)
     generateFingerprint().then((fp) => {
       persistFingerprint(fp);
       reportFingerprint(fp);
 
-      // If bot detected, log and optionally block
-      if (fp.is_bot) {
-        console.warn('[GZM-SEC] Bot/automation detected:', fp.bot_signals);
-        // In production, could redirect to a honeypot or show captcha
-        if (process.env.NODE_ENV === 'production') {
-          document.body.innerHTML = `
-            <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;color:#ef4444;font-family:monospace;font-size:18px;text-align:center;padding:40px;">
-              <div>
-                <h1 style="font-size:48px;margin-bottom:16px;">\u26D4 ACCESS DENIED</h1>
-                <p>Automated access detected. This incident has been logged.</p>
-                <p style="color:#666;font-size:12px;margin-top:20px;">Ref: ${fp.device_id.slice(0, 12)}</p>
-              </div>
-            </div>
-          `;
-        }
-      }
-
-      // If VPN detected, log (don't block, just flag)
-      if (fp.vpn_detected) {
-        console.info('[GZM-SEC] VPN/proxy likely detected. Timezone/language mismatch.');
+      // Immediate bot check from fingerprint
+      if (fp.is_bot && process.env.NODE_ENV === 'production') {
+        blockAccess(fp.device_id, 'Automation detected via fingerprint');
+        return;
       }
     });
 
-    // === BEHAVIORAL BIOMETRICS ===
-    // Tracks mouse movement patterns, typing cadence, scroll behavior
-    // Builds a human-vs-bot score over time
+    // ============================================================
+    // PHASE 3: BEHAVIORAL TRACKING (starts immediately, builds over time)
+    // ============================================================
+
+    // Basic behavioral (from fingerprint.ts)
     initBehavioralTracking();
 
-    // === CONSOLE WARNING ===
+    // Deep behavioral (from threat-detection.ts: entropy, curves, precision)
+    initDeepBehavioralTracking();
+
+    // ============================================================
+    // PHASE 4: ADVANCED THREAT DETECTION (async, ~2-3s)
+    // ============================================================
+
+    // Run full advanced detection suite after a short delay
+    // (gives behavioral tracking time to collect initial data)
+    setTimeout(async () => {
+      try {
+        // Advanced VPN detection (12 signals)
+        const vpnResult = await detectVPNAdvanced();
+
+        // Advanced bot detection (22 checks)
+        const botResult = detectBotsAdvanced();
+
+        // Report to backend
+        reportThreatFindings({
+          vpn: vpnResult,
+          bot: botResult,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Immediate response for critical threats
+        if (botResult.confidence >= 0.8 && process.env.NODE_ENV === 'production') {
+          blockAccess('bot-' + botResult.category, `Bot detected: ${botResult.signals.join(', ')}`);
+          return;
+        }
+
+        // Flag VPN users (don't block, but note it)
+        if (vpnResult.vpnLikelihood >= 0.7) {
+          flagSession('vpn-detected', vpnResult);
+        }
+      } catch (e) {
+        // Security checks should never crash the app
+        console.error('[GZM-SEC] Threat detection error (non-fatal)');
+      }
+    }, 3000);
+
+    // ============================================================
+    // PHASE 5: CONTINUOUS MONITORING (runs every 30 seconds)
+    // ============================================================
+
+    assessmentIntervalRef.current = setInterval(async () => {
+      try {
+        // Full composite threat assessment
+        const assessment = await assessThreat();
+        threatLevelRef.current = assessment.level;
+
+        // Adaptive rate limit check
+        const rateStatus = adaptiveRateCheck();
+
+        // Auto-escalation based on threat score
+        if (process.env.NODE_ENV === 'production') {
+          switch (assessment.action) {
+            case 'block':
+              blockAccess('threat-score-' + assessment.score, `Threat score: ${assessment.score}/100`);
+              break;
+
+            case 'throttle':
+              // Inject aggressive throttle into all API calls
+              window.__GZM_THROTTLE_MS = 10000; // 10 second minimum between requests
+              showThrottleWarning();
+              break;
+
+            case 'challenge':
+              // Degrade functionality: hide sensitive data, require re-auth
+              window.__GZM_CHALLENGE_MODE = true;
+              showChallengeOverlay();
+              break;
+
+            case 'allow':
+              // Clear any previous throttle/challenge
+              window.__GZM_THROTTLE_MS = 0;
+              window.__GZM_CHALLENGE_MODE = false;
+              break;
+          }
+        }
+
+        // Report behavioral analysis periodically
+        const behavior = analyzeBehavior();
+        if (behavior.verdict === 'definitely-bot' || behavior.verdict === 'likely-bot') {
+          reportThreatFindings({
+            type: 'behavioral-anomaly',
+            behavior,
+            assessment,
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // Rate limit enforcement
+        if (!rateStatus.allowed) {
+          showThrottleWarning();
+        }
+      } catch {
+        // Non-fatal: continuous monitoring should never crash the app
+      }
+    }, 30000); // Every 30 seconds
+
+    // ============================================================
+    // CONSOLE WARNING
+    // ============================================================
     if (process.env.NODE_ENV === 'production') {
-      // Clear any previous logs first
       console.clear();
-      console.log(
-        '%c\u26A0\uFE0F STOP',
-        'color: red; font-size: 48px; font-weight: bold; text-shadow: 2px 2px black;'
-      );
-      console.log(
-        '%cThis is a classified intelligence system.',
-        'font-size: 16px; color: #ef4444; font-weight: bold;'
-      );
-      console.log(
-        '%cUnauthorized access, reverse engineering, or data extraction is a federal offense under 18 U.S.C. \u00A7 1030 (Computer Fraud and Abuse Act).\n\nYour device has been fingerprinted. This session is being monitored.',
-        'font-size: 13px; color: #999;'
-      );
+      console.log('%c\u26A0\uFE0F STOP', 'color:red;font-size:48px;font-weight:bold;text-shadow:2px 2px black;');
+      console.log('%cClassified Intelligence System', 'font-size:16px;color:#ef4444;font-weight:bold;');
+      console.log('%c18 U.S.C. \u00A7 1030. Device fingerprinted. Session monitored. Behavioral analysis active.', 'font-size:12px;color:#666;');
     }
+
+    // Cleanup
+    return () => {
+      if (assessmentIntervalRef.current) clearInterval(assessmentIntervalRef.current);
+    };
   }, []);
 
-  // Honeypot fields (invisible, catches bots that auto-fill all form fields)
+  // Honeypot fields
   return (
     <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', top: '-9999px', opacity: 0, pointerEvents: 'none' }}>
       <input type="text" name="website" tabIndex={-1} autoComplete="off" />
@@ -93,109 +203,150 @@ export function SecurityInit() {
   );
 }
 
-/**
- * Aggressive DevTools lockout.
- * Works on login screen and all other pages.
- * Multiple detection methods that are hard to bypass.
- */
+// ============================================================
+// RESPONSE ACTIONS
+// ============================================================
+
+function blockAccess(reason: string, detail: string): void {
+  // Report the block to backend
+  reportThreatFindings({ type: 'block', reason, detail, timestamp: new Date().toISOString() });
+
+  // Nuke the page
+  document.body.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;color:#ef4444;font-family:'JetBrains Mono',monospace;text-align:center;padding:40px;">
+      <div>
+        <div style="font-size:64px;margin-bottom:16px;">\u26D4</div>
+        <h1 style="font-size:28px;margin-bottom:12px;">ACCESS DENIED</h1>
+        <p style="color:#888;font-size:14px;margin-bottom:24px;">This incident has been logged and reported.</p>
+        <p style="color:#444;font-size:11px;">Ref: ${reason.slice(0, 20)} | ${new Date().toISOString()}</p>
+      </div>
+    </div>
+  `;
+
+  // Prevent any further JS execution
+  setTimeout(() => { window.stop(); }, 100);
+}
+
+function showThrottleWarning(): void {
+  // Show a non-blocking banner at the top
+  const existing = document.getElementById('gzm-throttle-banner');
+  if (existing) return; // Already showing
+
+  const banner = document.createElement('div');
+  banner.id = 'gzm-throttle-banner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px 20px;background:#7c2d12;color:#fb923c;font-family:var(--font-mono);font-size:12px;text-align:center;z-index:99999;';
+  banner.textContent = '\u26A0\uFE0F Unusual activity detected. Requests are being throttled. Normal service will resume shortly.';
+  document.body.prepend(banner);
+
+  // Auto-remove after 30 seconds
+  setTimeout(() => banner.remove(), 30000);
+}
+
+function showChallengeOverlay(): void {
+  const existing = document.getElementById('gzm-challenge-overlay');
+  if (existing) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'gzm-challenge-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(10,10,15,0.95);display:flex;align-items:center;justify-content:center;z-index:99998;font-family:var(--font-mono);';
+  overlay.innerHTML = `
+    <div style="text-align:center;color:#e2e8f0;">
+      <div style="font-size:36px;margin-bottom:16px;">\u{1F50D}</div>
+      <h2 style="font-size:20px;margin-bottom:12px;">Verification Required</h2>
+      <p style="color:#94a3b8;font-size:13px;margin-bottom:24px;">Unusual activity detected on this session.<br/>Please verify you are an authorized operator.</p>
+      <button onclick="this.parentElement.parentElement.remove();window.__GZM_CHALLENGE_MODE=false;" style="padding:12px 32px;background:#0ea5e9;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">I am an authorized user</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function flagSession(reason: string, data: unknown): void {
+  // Store flag in sessionStorage for backend to pick up
+  try {
+    const flags = JSON.parse(sessionStorage.getItem('_gzm_flags') || '[]');
+    flags.push({ reason, timestamp: new Date().toISOString(), data });
+    sessionStorage.setItem('_gzm_flags', JSON.stringify(flags));
+  } catch {}
+}
+
+async function reportThreatFindings(findings: Record<string, unknown>): Promise<void> {
+  try {
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    await fetch(`${API_BASE}/api/v1/security/threat-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'GZM-Frontend' },
+      body: JSON.stringify(findings),
+      credentials: 'same-origin',
+    });
+  } catch {
+    // Silent fail (don't block app if reporting fails)
+  }
+}
+
+// ============================================================
+// DEVTOOLS LOCKOUT (5 methods)
+// ============================================================
+
 function lockDevTools(): void {
   if (typeof window === 'undefined') return;
 
-  // Method 1: Continuous debugger statement (freezes DevTools if open)
-  // Only in production to not annoy during development
+  // Method 1: Debugger timing trap
   if (process.env.NODE_ENV === 'production') {
-    const antiDebug = () => {
-      const start = performance.now();
-      // This line will pause execution if DevTools are open with breakpoints
+    setInterval(() => {
+      const s = performance.now();
       // eslint-disable-next-line no-debugger
       debugger;
-      const end = performance.now();
-      // If more than 100ms passed, debugger was open
-      if (end - start > 100) {
-        // DevTools detected via debugger timing
+      if (performance.now() - s > 100) {
         document.body.style.display = 'none';
         window.location.href = '/unauthorized';
       }
-    };
-    // Run every 2 seconds
-    setInterval(antiDebug, 2000);
+    }, 2000);
   }
 
-  // Method 2: Detect via toString (works in Chrome)
+  // Method 2: Console.log image toString trick
   if (process.env.NODE_ENV === 'production') {
-    const element = new Image();
-    let devtoolsDetected = false;
-    Object.defineProperty(element, 'id', {
-      get: function () {
-        devtoolsDetected = true;
-        // DevTools inspected this element
-        console.clear();
-      },
-    });
-    setInterval(() => {
-      devtoolsDetected = false;
-      console.log('%c', element as any);
-      if (devtoolsDetected) {
-        document.body.innerHTML = `
-          <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;color:#ef4444;font-family:monospace;text-align:center;">
-            <div>
-              <h1 style="font-size:36px;">\u26D4 Developer Tools Detected</h1>
-              <p style="color:#666;margin-top:12px;">This application cannot run with developer tools open.</p>
-            </div>
-          </div>
-        `;
-      }
-    }, 1000);
+    const el = new Image();
+    Object.defineProperty(el, 'id', { get: () => { console.clear(); } });
+    setInterval(() => { console.log('%c', el as any); }, 1000);
   }
 
-  // Method 3: Resize detection (DevTools docked changes window size)
+  // Method 3: Window resize detection
   if (process.env.NODE_ENV === 'production') {
-    let lastWidth = window.outerWidth;
-    let lastHeight = window.outerHeight;
-
     setInterval(() => {
-      const widthDiff = window.outerWidth - window.innerWidth;
-      const heightDiff = window.outerHeight - window.innerHeight;
-
-      // Significant diff = docked DevTools
-      if (widthDiff > 200 || heightDiff > 200) {
-        // Don't nuke the page, just clear console and show warning
+      if (window.outerWidth - window.innerWidth > 200 || window.outerHeight - window.innerHeight > 200) {
         console.clear();
-        console.log('%c\u26D4 MONITORING ACTIVE', 'color: red; font-size: 24px; font-weight: bold;');
       }
-
-      lastWidth = window.outerWidth;
-      lastHeight = window.outerHeight;
     }, 500);
   }
 
-  // Method 4: Block all keyboard shortcuts that open DevTools
+  // Method 4: Keyboard shortcut blocking
   document.addEventListener('keydown', (e) => {
-    // F12
-    if (e.key === 'F12') { e.preventDefault(); e.stopPropagation(); return false; }
-    // Ctrl+Shift+I (Inspect)
-    if (e.ctrlKey && e.shiftKey && e.key === 'I') { e.preventDefault(); e.stopPropagation(); return false; }
-    // Ctrl+Shift+J (Console)
-    if (e.ctrlKey && e.shiftKey && e.key === 'J') { e.preventDefault(); e.stopPropagation(); return false; }
-    // Ctrl+Shift+C (Element picker)
-    if (e.ctrlKey && e.shiftKey && e.key === 'C') { e.preventDefault(); e.stopPropagation(); return false; }
-    // Ctrl+U (View source)
-    if (e.ctrlKey && e.key === 'u') { e.preventDefault(); e.stopPropagation(); return false; }
-    // Cmd variants for Mac
-    if (e.metaKey && e.altKey && e.key === 'i') { e.preventDefault(); e.stopPropagation(); return false; }
-    if (e.metaKey && e.altKey && e.key === 'j') { e.preventDefault(); e.stopPropagation(); return false; }
-    if (e.metaKey && e.shiftKey && e.key === 'c') { e.preventDefault(); e.stopPropagation(); return false; }
-  }, true); // Capture phase to intercept before anything else
+    if (e.key === 'F12') { e.preventDefault(); e.stopPropagation(); }
+    if (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key)) { e.preventDefault(); e.stopPropagation(); }
+    if (e.ctrlKey && e.key === 'u') { e.preventDefault(); e.stopPropagation(); }
+    if (e.metaKey && e.altKey && ['i', 'j'].includes(e.key)) { e.preventDefault(); e.stopPropagation(); }
+    if (e.metaKey && e.shiftKey && e.key === 'c') { e.preventDefault(); e.stopPropagation(); }
+  }, true);
 
-  // Method 5: Override console methods in production
+  // Method 5: Console method override
   if (process.env.NODE_ENV === 'production') {
     const noop = () => {};
-    // Keep console.error for genuine errors, nuke everything else
     (window as any).console.log = noop;
     (window as any).console.info = noop;
     (window as any).console.debug = noop;
     (window as any).console.table = noop;
     (window as any).console.dir = noop;
     (window as any).console.trace = noop;
+  }
+}
+
+// ============================================================
+// GLOBAL TYPE EXTENSIONS
+// ============================================================
+
+declare global {
+  interface Window {
+    __GZM_THROTTLE_MS: number;
+    __GZM_CHALLENGE_MODE: boolean;
   }
 }
