@@ -1,270 +1,133 @@
-/**
- * GZM API Client — Production-Grade
- *
- * Type-safe wrapper for the FastAPI backend (port 8000).
- * Features:
- * - Retry with exponential backoff (3 attempts)
- * - AbortController timeout (15s default)
- * - Response type inference
- * - Error normalization
- * - All 20+ endpoints from api/app.py
- */
+import { sanitizeInput, secureFetch, checkRateLimit } from './security';
+import { checkRequest, reportSuccess, reportFailure, deduplicateRequest } from './rate-limiter';
 
-const API_BASE = process.env.NEXT_PUBLIC_GZM_API_URL || 'http://localhost:8000';
-const WS_BASE = process.env.NEXT_PUBLIC_GZM_WS_URL || 'ws://localhost:8000';
-const DEFAULT_TIMEOUT = 15000;
-const MAX_RETRIES = 2;
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-// ═══════════════════════════════════════════════════════════════
-// TYPES
-// ═══════════════════════════════════════════════════════════════
-
-export interface GZMStats {
-  node_count: number;
-  relationship_count: number;
-  uptime_seconds: number;
-  graph: string;
-  vertices?: number;
-}
-
-export interface GZMAlert {
-  vertex_id?: string;
-  name?: string;
-  entity_name?: string;
-  vertex_type?: string;
-  severity?: 'critical' | 'high' | 'medium' | 'low';
-  score?: number;
-  country?: string;
-  domains?: string[];
-  domain_count?: number;
-  created_at?: string;
-  source?: string;
-  status?: string;
-  convergence_score?: number;
-}
-
-export interface AlertsResponse {
-  alerts: GZMAlert[];
-  active_alerts: number;
-  critical?: number;
-  high?: number;
-}
-
-export interface DossierResponse {
-  entity_name: string;
-  labels: string[];
-  risk_score: number;
-  connections: number;
-  sources: string[];
-  confidence_grade: string;
-  domains_present: string[];
-  network_risk?: number;
-  sanctions_status?: { program: string; list_date?: string };
-  offshore_connections: Array<{
-    edge_type: string;
-    target_id: string;
-    target_type?: string;
-    score?: number;
-  }>;
-  evidence_count?: number;
-}
-
-export interface HotspotResponse {
-  hotspots: Array<{
-    lat: number;
-    lon: number;
-    latitude?: number;
-    longitude?: number;
-    score: number;
-    name?: string;
-    entity_count?: number;
-    h3_index?: string;
-  }>;
-}
-
-export interface QueryResult {
-  results: Array<{
-    vertex_id?: string;
-    name?: string;
-    vertex_type?: string;
-    country?: string;
-    connections?: number;
-    source_id?: string;
-    target_id?: string;
-    edge_type?: string;
-    risk_score?: number;
-    labels?: string[];
-  }>;
-}
-
-export interface BriefingResponse {
-  country: string;
-  threat_level: string;
-  score: number;
-  domains: Record<string, {
-    count?: number;
-    score?: number;
-    entities?: number;
-    summary?: string;
-  }>;
-  recommendations: string[];
-  top_entities?: Array<{ name: string; type: string; risk: number }>;
-}
-
-export interface HealthResponse {
-  status: string;
-  tigergraph: boolean;
-  graph: string;
-  uptime: number;
-  collectors?: number;
-  engines?: number;
-}
-
-export interface PredictionResponse {
-  predictions: Array<{
-    entity: string;
-    probability: number;
-    confidence: number;
-    lead_time_days: number;
-    supporting_signals: string[];
-  }>;
-}
-
-export interface ReportResponse {
-  report_id: string;
-  title: string;
-  content: string;
-  generated_at: string;
-  country?: string;
-  threat_level?: string;
-}
-
-export type Severity = 'critical' | 'high' | 'medium' | 'low';
-
-// ═══════════════════════════════════════════════════════════════
-// FETCH ENGINE
-// ═══════════════════════════════════════════════════════════════
-
-class ApiError extends Error {
+export class APIError extends Error {
   constructor(public status: number, message: string) {
     super(message);
-    this.name = 'ApiError';
+    this.name = 'APIError';
   }
 }
 
-async function request<T>(
-  path: string,
-  options: RequestInit & { timeout?: number; retries?: number } = {}
-): Promise<T | null> {
-  const { timeout = DEFAULT_TIMEOUT, retries = MAX_RETRIES, ...fetchOptions } = options;
-  let lastError: Error | null = null;
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = options?.method || 'GET';
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
+  // RATE LIMIT CHECK (blocks request before it leaves the browser)
+  const rateCheck = checkRequest(path, method);
+  if (!rateCheck.allowed) {
+    throw new APIError(429, rateCheck.reason || 'Rate limited');
+  }
 
-    try {
-      const res = await fetch(`${API_BASE}${path}`, {
-        ...fetchOptions,
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          ...fetchOptions.headers,
-        },
-      });
+  const url = `${API_BASE}${path}`;
 
-      clearTimeout(timer);
+  // Timeout: 30 seconds
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
-      if (!res.ok) {
-        if (res.status === 429) {
-          // Rate limited — wait and retry
-          const retryAfter = parseInt(res.headers.get('Retry-After') || '2', 10);
-          await sleep(retryAfter * 1000);
-          continue;
-        }
-        throw new ApiError(res.status, `HTTP ${res.status}`);
-      }
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'GZM-Frontend',
+        'X-GZM-Client': 'v4.1',
+        ...options?.headers,
+      },
+      credentials: 'same-origin',
+    });
 
-      return (await res.json()) as T;
-    } catch (err) {
-      clearTimeout(timer);
-      lastError = err as Error;
-
-      if (attempt < retries) {
-        // Exponential backoff: 500ms, 1500ms
-        await sleep(500 * Math.pow(3, attempt));
-      }
+    if (!res.ok) {
+      reportFailure();
+      throw new APIError(res.status, `API error: ${res.status} ${res.statusText}`);
     }
-  }
 
-  if (process.env.NODE_ENV === 'development') {
-    console.warn(`[GZM API] ${path} failed after ${retries + 1} attempts:`, lastError?.message);
+    // Max response size: 10MB
+    const contentLength = res.headers.get('content-length');
+    if (contentLength && parseInt(contentLength) > 10 * 1024 * 1024) {
+      reportFailure();
+      throw new APIError(413, 'Response too large');
+    }
+
+    reportSuccess();
+    return res.json();
+  } catch (e) {
+    if (e instanceof APIError) throw e;
+    reportFailure();
+    throw new APIError(0, 'Network error or timeout');
+  } finally {
+    clearTimeout(timeout);
   }
-  return null;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// Deduplicated GET (prevents duplicate requests within 2s)
+function deduplicatedGet<T>(path: string): Promise<T> {
+  return deduplicateRequest(path, () => request<T>(path));
 }
 
-// ═══════════════════════════════════════════════════════════════
-// API METHODS
-// ═══════════════════════════════════════════════════════════════
+export const api = {
+  // System (deduplicated, polled frequently)
+  health: () => deduplicatedGet<{ status: string }>('/health'),
+  stats: () => deduplicatedGet<{ node_count: number; relationship_count: number; uptime: number }>('/stats'),
 
-export const gzmApi = {
-  // ─── System ────────────────────────────────────────────────
-  health: () => request<HealthResponse>('/health'),
-  stats: () => request<GZMStats>('/stats'),
+  // Intelligence (deduplicated reads)
+  alerts: () => deduplicatedGet<any[]>('/alerts'),
+  hotspots: () => deduplicatedGet<any[]>('/hotspots'),
+  dossier: (name: string) => {
+    const clean = sanitizeInput(name);
+    if (!clean) throw new APIError(400, 'Invalid entity name');
+    return deduplicatedGet<any>(`/dossier/${encodeURIComponent(clean)}`);
+  },
+  briefing: (country: string) => {
+    const clean = sanitizeInput(country);
+    if (!clean) throw new APIError(400, 'Invalid country name');
+    return deduplicatedGet<any>(`/briefing/${encodeURIComponent(clean)}`);
+  },
 
-  // ─── Intelligence Analysis ─────────────────────────────────
-  alerts: (limit = 100, severity?: Severity) =>
-    request<AlertsResponse>(`/alerts?limit=${limit}${severity ? `&severity=${severity}` : ''}`),
+  // Prediction (mutation, rate limited: 10/min)
+  predict: (data: Record<string, unknown>) => {
+    const sanitized = Object.fromEntries(
+      Object.entries(data).filter(([k]) => k.length <= 100)
+    );
+    return request<any>('/predict', { method: 'POST', body: JSON.stringify(sanitized) });
+  },
 
-  dossier: (entity: string) =>
-    request<DossierResponse>(`/dossier/${encodeURIComponent(entity)}`),
+  // CRUD (deduplicated, sanitized)
+  getVertices: (type: string, limit = 100) => {
+    const cleanType = sanitizeInput(type).replace(/[^a-zA-Z0-9_]/g, '');
+    const safeLimit = Math.min(Math.max(1, limit), 1000);
+    return deduplicatedGet<any[]>(`/api/v1/vertices/${cleanType}?limit=${safeLimit}`);
+  },
+  getVertex: (type: string, id: string) => {
+    const cleanType = sanitizeInput(type).replace(/[^a-zA-Z0-9_]/g, '');
+    const cleanId = sanitizeInput(id).replace(/[^a-zA-Z0-9_\-]/g, '');
+    return deduplicatedGet<any>(`/api/v1/vertices/${cleanType}/${cleanId}`);
+  },
 
-  briefing: (country: string) =>
-    request<BriefingResponse>(`/briefing/${encodeURIComponent(country)}`),
+  // Export (rate limited: 5/min)
+  exportCSV: (params: Record<string, string>) => {
+    const rateCheck = checkRequest('/api/v1/export/csv', 'GET');
+    if (!rateCheck.allowed) throw new APIError(429, rateCheck.reason || 'Export rate limited');
+    const sanitizedParams = Object.fromEntries(
+      Object.entries(params).map(([k, v]) => [sanitizeInput(k), sanitizeInput(v)])
+    );
+    const qs = new URLSearchParams(sanitizedParams).toString();
+    return `${API_BASE}/api/v1/export/csv?${qs}`;
+  },
 
-  hotspots: (resolution = 5, minCount = 1) =>
-    request<HotspotResponse>(`/hotspots?resolution=${resolution}&min_count=${minCount}`),
-
-  query: (q: string, maxResults = 60) =>
-    request<QueryResult>('/query', {
-      method: 'POST',
-      body: JSON.stringify({ query: q, max_results: maxResults }),
-    }),
-
-  predict: (entity?: string, country?: string) =>
-    request<PredictionResponse>('/predict', {
-      method: 'POST',
-      body: JSON.stringify({ entity, country }),
-    }),
-
-  // ─── Reports ───────────────────────────────────────────────
-  generateReport: (country: string, type: 'briefing' | 'sitrep' | 'convergence' = 'briefing') =>
-    request<ReportResponse>('/api/v1/reports/generate', {
-      method: 'POST',
-      body: JSON.stringify({ country, report_type: type }),
-    }),
-
-  // ─── Graph CRUD ────────────────────────────────────────────
-  searchVertices: (type: string, limit = 50) =>
-    request<{ vertices: unknown[] }>(`/api/v1/vertices/${type}?limit=${limit}`),
-
-  // ─── Export ────────────────────────────────────────────────
-  exportCsv: (type: string) => `${API_BASE}/api/v1/export/${type}/csv`,
-  exportStix: (entity: string) => `${API_BASE}/api/v1/export/stix?entity=${encodeURIComponent(entity)}`,
-
-  // ─── SSE Stream ────────────────────────────────────────────
-  alertsStreamUrl: () => `${API_BASE}/api/v1/stream/alerts`,
-
-  // ─── WebSocket ─────────────────────────────────────────────
-  alertsWsUrl: () => `${WS_BASE}/ws/alerts`,
-
-  // ─── Base URL (for custom fetches) ─────────────────────────
-  baseUrl: API_BASE,
-  wsUrl: WS_BASE,
+  // ISR Tasking (EXPENSIVE: 3/hour for satellite, 10/min for drone)
+  isrRequirements: () => deduplicatedGet<any[]>('/api/v1/isr/requirements'),
+  platformStatus: () => deduplicatedGet<any[]>('/api/v1/platforms'),
+  taskPlatform: (task: Record<string, unknown>) => {
+    if (!task.target_entity_id || !task.required_sensor) {
+      throw new APIError(400, 'Missing required tasking fields');
+    }
+    // Extra confirmation for satellite tasking (costs real money)
+    if (task.platform_type === 'satellite') {
+      const satCheck = checkRequest('/api/v1/isr/task/satellite', 'POST');
+      if (!satCheck.allowed) throw new APIError(429, satCheck.reason || 'Satellite tasking limit reached (3/hour)');
+    }
+    return request<any>('/api/v1/isr/task', { method: 'POST', body: JSON.stringify(task) });
+  },
 };
-
-export default gzmApi;

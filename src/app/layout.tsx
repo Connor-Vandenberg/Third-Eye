@@ -1,14 +1,15 @@
 import type { Metadata, Viewport } from "next";
-import "./globals.css";
+import "../styles/globals.css";
 import { Analytics } from '@vercel/analytics/react';
+import { Providers } from '@/providers';
 
 const SITE_URL = "https://grayzonemonitor.com";
 const SITE_NAME = "Gray Zone Monitor";
-const SITE_TITLE = "Gray Zone Monitor — AI-Powered Geopolitical Intelligence Platform";
-const SITE_DESCRIPTION = "Real-time gray zone threat monitoring platform. Temporal knowledge graph with 78 vertex types, 55 edge types, 137 collectors, convergence scoring, and zero-shot prediction. Detects hybrid warfare, sanctions evasion, and covert military operations 3-14 days before conventional analysis.";
+const SITE_TITLE = "Gray Zone Monitor \u2014 Multi-Domain Intelligence Fusion Platform";
+const SITE_DESCRIPTION = "UCI-compliant multi-domain intelligence fusion and autonomous collection management system. Temporal knowledge graph with 212 vertex types, 146+ collectors, 1,340+ convergence signals, and autonomous ISR tasking across drones, satellites, ground robots, and maritime platforms.";
 
 export const viewport: Viewport = {
-  themeColor: "#D4AF37",
+  themeColor: "#0a1628",
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
@@ -23,29 +24,18 @@ export const metadata: Metadata = {
   },
   description: SITE_DESCRIPTION,
   keywords: [
-    // Core domain
     "gray zone", "grey zone", "hybrid warfare", "irregular warfare",
     "geopolitical intelligence", "geopolitical risk", "conflict prediction",
     "OSINT", "open source intelligence", "threat intelligence",
     "situational awareness", "convergence analysis",
-    
-    // Technical capabilities
     "knowledge graph", "temporal graph", "TigerGraph",
-    "machine learning", "zero-shot prediction", "TabFM",
+    "machine learning", "zero-shot prediction", "TabICL",
     "AIS tracking", "maritime intelligence", "dark fleet detection",
     "sanctions evasion", "entity resolution", "network analysis",
-    
-    // Data domains
-    "conflict monitoring", "ACLED", "arms transfers",
-    "cyber threat intelligence", "supply chain risk",
-    "maritime chokepoints", "country instability index",
-    "cascade modeling", "scenario analysis",
-    
-    // Competitors/positioning
-    "palantir alternative", "recorded future alternative",
-    "open source intelligence platform", "defense intelligence",
-    
-    // Brand
+    "drone swarm", "ISR tasking", "autonomous collection",
+    "UCI", "JADC2", "sensor fusion", "multi-domain",
+    "DARPA", "SBIR", "defense intelligence",
+    "palantir alternative", "anduril lattice",
     "gray zone monitor", "GZM", "grayzonemonitor",
   ],
   authors: [{ name: "Connor Vandenberg", url: SITE_URL }],
@@ -77,8 +67,8 @@ export const metadata: Metadata = {
     canonical: SITE_URL,
   },
   openGraph: {
-    title: "Gray Zone Monitor — AI-Powered Geopolitical Intelligence Platform",
-    description: "Temporal knowledge graph platform detecting hybrid warfare and gray zone escalation 3-14 days before conventional analysis. 137 collectors, 94 engines, 10 graph algorithms.",
+    title: "Gray Zone Monitor \u2014 Multi-Domain Intelligence Fusion Platform",
+    description: "UCI-compliant intelligence fusion platform. 146+ collectors, 212 vertex types, autonomous ISR tasking, multi-platform integration across drones, satellites, ground robots, and maritime assets.",
     type: "website",
     siteName: SITE_NAME,
     locale: "en_US",
@@ -88,15 +78,15 @@ export const metadata: Metadata = {
         url: `${SITE_URL}/og-image.png`,
         width: 1200,
         height: 630,
-        alt: "Gray Zone Monitor — Geopolitical Intelligence Platform",
+        alt: "Gray Zone Monitor \u2014 Multi-Domain Intelligence Fusion Platform",
         type: "image/png",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Gray Zone Monitor — Predicts Geopolitical Escalation Before It Happens",
-    description: "Temporal knowledge graph + 137 OSINT collectors + zero-shot prediction. Detects gray zone threats 3-14 days early.",
+    title: "Gray Zone Monitor \u2014 Predicts Geopolitical Escalation Before It Happens",
+    description: "Temporal knowledge graph + 146+ OSINT collectors + autonomous ISR tasking + zero-shot prediction. Multi-domain intelligence fusion for defense.",
     images: [`${SITE_URL}/og-image.png`],
   },
   category: "technology",
@@ -121,7 +111,7 @@ const jsonLd = {
   description: SITE_DESCRIPTION,
   applicationCategory: "SecurityApplication",
   operatingSystem: "Web",
-  browserRequirements: "Requires a modern web browser",
+  browserRequirements: "Requires a modern web browser with WebGL support",
   offers: {
     "@type": "Offer",
     price: "0",
@@ -129,20 +119,20 @@ const jsonLd = {
     availability: "https://schema.org/InStock",
   },
   featureList: [
-    "Country Instability Index (CII) for 195 countries with z-score normalization",
-    "Multi-domain convergence detection (maritime + cyber + financial + diplomatic + military)",
-    "Temporal knowledge graph (78 vertex types, 55 edge types, Weibull decay)",
+    "UCI v2.5 compliant multi-domain intelligence fusion",
+    "Autonomous ISR tasking via CBBA swarm coordination",
+    "146+ OSINT collectors across 30+ domains",
+    "212 vertex types, 419 edge types in temporal knowledge graph",
+    "1,340+ convergence signals with Weibull temporal decay",
+    "Multi-platform integration: drones (MAVLink), satellites (Planet/ICEYE), UGVs (ROS2), USVs",
     "Zero-shot prediction via TabICL foundation model",
-    "137 automated OSINT collectors across 30+ domains",
-    "SIR epidemic cascade modeling with Monte Carlo simulation",
-    "Maritime chokepoint risk assessment with live AIS integration",
-    "Dark web intelligence via VoidAccess + STIX 2.1",
-    "3-tier alerting (FLASH/PRIORITY/ROUTINE) with semantic deduplication",
-    "LLM-powered intelligence briefings (Claude, GPT, Ollama)",
-    "10 installed TigerGraph algorithms (PageRank, Betweenness, Louvain, etc.)",
-    "MCP server with 41 tools (stdio + Streamable HTTP)",
-    "Interactive 3D globe with MapLibre GL (60fps WebGL)",
-    "Entity relationship graph visualization",
+    "Through-wall radar and WiFi CSI biometric sensing",
+    "Zarf air-gap deployment (IL5-ready, DoD Zero Trust)",
+    "10 installed TigerGraph algorithms (PageRank, Louvain, Betweenness, Decay, Convergence)",
+    "Dempster-Shafer evidence fusion across 7 INT disciplines",
+    "Real-time WebSocket intelligence feed with priority alerting",
+    "MapLibre GL 3D globe with entity markers, convergence zones, platform tracking",
+    "STIX 2.1 / TAXII 2.1 export and interoperability",
   ],
   screenshot: `${SITE_URL}/og-image.png`,
   author: {
@@ -165,6 +155,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
         <link rel="icon" href="/favicon.ico" sizes="any" />
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
         <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
@@ -175,12 +166,13 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
-
       </head>
       <body className="antialiased">
-        <ErrorBoundary name="Gray Zone Monitor">
-          {children}
-        </ErrorBoundary>
+        <Providers>
+          <ErrorBoundary name="Gray Zone Monitor">
+            {children}
+          </ErrorBoundary>
+        </Providers>
         <Analytics />
       </body>
     </html>

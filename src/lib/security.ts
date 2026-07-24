@@ -1,206 +1,239 @@
 /**
- * GZM Client-Side Security Utilities
- *
- * Defense-in-depth for the intelligence dashboard:
- * - DevTools detection (log + optional callback)
- * - Clipboard interception (prevent copying sensitive data)
- * - Dynamic watermarking (user attribution on screenshots)
- * - Right-click prevention on sensitive panels
- * - Console warning for social engineering attacks
- *
- * NOTE: Client-side protections are deterrents, not absolute barriers.
- * The real security is server-side auth + CORS + rate limiting.
- * These make casual scraping/leaking harder and attributable.
+ * GZM Frontend Security Module
+ * Prevents: XSS, injection, scraping, oracle poisoning, bot access, data exfiltration
  */
 
-// =============================================================================
-// DEVTOOLS DETECTION
-// =============================================================================
-
-let devToolsOpen = false;
-
-/**
- * Detect if browser DevTools are open.
- * Uses the debugger timing method (most reliable cross-browser).
- * Call this in a useEffect with an interval.
- */
-export function detectDevTools(onDetected?: () => void): boolean {
-  const threshold = 160;
-  const widthDiff = window.outerWidth - window.innerWidth;
-  const heightDiff = window.outerHeight - window.innerHeight;
-
-  const isOpen = widthDiff > threshold || heightDiff > threshold;
-
-  if (isOpen && !devToolsOpen) {
-    devToolsOpen = true;
-    console.warn(
-      '%c\u26a0\ufe0f GZM Security Notice',
-      'color: #ef4444; font-size: 20px; font-weight: bold;'
-    );
-    console.warn(
-      '%cThis is a protected intelligence platform. All access is logged and monitored.',
-      'color: #f59e0b; font-size: 14px;'
-    );
-    onDetected?.();
-  } else if (!isOpen) {
-    devToolsOpen = false;
-  }
-
-  return isOpen;
+// === INPUT SANITIZATION ===
+// Strip all HTML tags and dangerous characters from user input
+export function sanitizeInput(input: string): string {
+  if (!input || typeof input !== 'string') return '';
+  return input
+    .replace(/[<>]/g, '') // Strip angle brackets (XSS)
+    .replace(/javascript:/gi, '') // Strip javascript: protocol
+    .replace(/on\w+=/gi, '') // Strip event handlers
+    .replace(/data:/gi, '') // Strip data: URIs
+    .replace(/vbscript:/gi, '') // Strip vbscript:
+    .replace(/expression\(/gi, '') // Strip CSS expressions
+    .replace(/url\(/gi, '') // Strip CSS url()
+    .trim()
+    .slice(0, 500); // Max 500 chars for any single input
 }
 
-// =============================================================================
-// CLIPBOARD PROTECTION
-// =============================================================================
-
-/**
- * Intercept copy events on sensitive containers.
- * Replaces copied text with a warning + watermark.
- */
-export function protectClipboard(container: HTMLElement, userId?: string): () => void {
-  const handler = (e: ClipboardEvent) => {
-    e.preventDefault();
-    const watermark = userId ? ` [User: ${userId}]` : '';
-    const warning = `[GZM Intelligence Data - Unauthorized Distribution Prohibited${watermark}]`;
-
-    if (e.clipboardData) {
-      e.clipboardData.setData('text/plain', warning);
+// Sanitize object keys and values recursively
+export function sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const cleanKey = sanitizeInput(key);
+    if (typeof value === 'string') {
+      result[cleanKey] = sanitizeInput(value);
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      result[cleanKey] = value;
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      result[cleanKey] = sanitizeObject(value as Record<string, unknown>);
+    } else if (Array.isArray(value)) {
+      result[cleanKey] = value.map((v) => typeof v === 'string' ? sanitizeInput(v) : v);
     }
-  };
-
-  container.addEventListener('copy', handler);
-  return () => container.removeEventListener('copy', handler);
+  }
+  return result;
 }
 
-// =============================================================================
-// WATERMARK
-// =============================================================================
+// === RATE LIMITING ===
+const requestCounts = new Map<string, { count: number; resetAt: number }>();
 
-/**
- * Apply an invisible forensic watermark over the page.
- * Survives screenshots, resists casual DevTools removal via MutationObserver.
- */
-export function applyWatermark(userId: string): () => void {
-  const watermarkId = '__gzm_wm';
+export function checkRateLimit(endpoint: string, maxRequests = 60, windowMs = 60000): boolean {
+  const now = Date.now();
+  const entry = requestCounts.get(endpoint);
 
-  function createWatermark(): HTMLDivElement {
-    const el = document.createElement('div');
-    el.id = watermarkId;
-    el.style.cssText = [
-      'position: fixed',
-      'inset: 0',
-      'z-index: 99999',
-      'pointer-events: none',
-      'overflow: hidden',
-      `background: repeating-linear-gradient(-45deg, transparent, transparent 200px, rgba(255,255,255,0.015) 200px, rgba(255,255,255,0.015) 201px)`,
-    ].join(';');
-
-    // Create text pattern
-    const text = `${userId} \u00b7 ${new Date().toISOString().substring(0, 10)}`;
-    el.innerHTML = `<svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="wmPattern" patternUnits="userSpaceOnUse" width="400" height="200" patternTransform="rotate(-30)">
-          <text x="10" y="100" fill="rgba(255,255,255,0.02)" font-size="11" font-family="monospace">${text}</text>
-        </pattern>
-      </defs>
-      <rect width="100%" height="100%" fill="url(#wmPattern)"/>
-    </svg>`;
-
-    return el;
+  if (!entry || now > entry.resetAt) {
+    requestCounts.set(endpoint, { count: 1, resetAt: now + windowMs });
+    return true;
   }
 
-  let el = createWatermark();
-  document.body.appendChild(el);
+  if (entry.count >= maxRequests) {
+    console.warn(`[GZM-SEC] Rate limit exceeded for ${endpoint}`);
+    return false;
+  }
 
-  // MutationObserver to re-inject if removed via DevTools
-  const observer = new MutationObserver(() => {
-    if (!document.getElementById(watermarkId)) {
-      el = createWatermark();
-      document.body.appendChild(el);
+  entry.count++;
+  return true;
+}
+
+// === SECURE FETCH ===
+export async function secureFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  // Rate limit check
+  const endpoint = new URL(url, window.location.origin).pathname;
+  if (!checkRateLimit(endpoint)) {
+    throw new Error('Rate limit exceeded. Please wait before retrying.');
+  }
+
+  // Timeout (30s default)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'GZM-Frontend', // Helps backend identify legit requests
+        'X-GZM-Client': 'v4.1',
+        ...options?.headers,
+      },
+      credentials: 'same-origin', // Never send cookies to third parties
+    });
+
+    if (!response.ok) {
+      // Don't leak error details to console in production
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Request failed');
+      }
+      throw new Error(`API ${response.status}: ${response.statusText}`);
+    }
+
+    // Validate response size (max 10MB)
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && parseInt(contentLength) > 10 * 1024 * 1024) {
+      throw new Error('Response too large');
+    }
+
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// === ANTI-SCRAPE MEASURES ===
+export function initAntiScrape(): void {
+  if (typeof window === 'undefined') return;
+  if (process.env.NODE_ENV !== 'production') return;
+
+  // Disable right-click context menu
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+  });
+
+  // Disable Ctrl+U (view source), Ctrl+S (save), Ctrl+P (print)
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && ['u', 's', 'p'].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+    }
+    // Disable F12 (DevTools)
+    if (e.key === 'F12') {
+      e.preventDefault();
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: false });
-
-  return () => {
-    observer.disconnect();
-    el.remove();
-  };
-}
-
-// =============================================================================
-// CONSOLE WARNING (Anti Social Engineering)
-// =============================================================================
-
-/**
- * Print a security warning in the browser console.
- * Deters paste-in-console attacks ("paste this code to unlock features").
- */
-export function printConsoleWarning(): void {
-  if (typeof window === 'undefined') return;
-
-  console.log(
-    '%c\u{1F6E1}\ufe0f GRAY ZONE MONITOR',
-    'color: #22d3ee; font-size: 24px; font-weight: bold; text-shadow: 2px 2px 4px rgba(0,0,0,0.5);'
-  );
-  console.log(
-    '%cThis is a restricted intelligence platform.\nAll sessions are authenticated, logged, and monitored.\nUnauthorized access attempts are reported.',
-    'color: #f59e0b; font-size: 13px; line-height: 1.6;'
-  );
-  console.log(
-    '%c\u26a0\ufe0f If someone told you to paste something here, they are trying to hack your account.',
-    'color: #ef4444; font-size: 14px; font-weight: bold;'
-  );
-}
-
-// =============================================================================
-// RIGHT-CLICK PREVENTION (for sensitive data panels)
-// =============================================================================
-
-/**
- * Prevent right-click context menu on sensitive elements.
- * NOTE: This is a deterrent only. Determined users can bypass it.
- */
-export function preventContextMenu(container: HTMLElement): () => void {
-  const handler = (e: MouseEvent) => {
-    e.preventDefault();
-    return false;
-  };
-  container.addEventListener('contextmenu', handler);
-  return () => container.removeEventListener('contextmenu', handler);
-}
-
-// =============================================================================
-// INITIALIZATION
-// =============================================================================
-
-/**
- * Initialize all client-side security measures.
- * Call once in the root layout or platform layout.
- */
-export function initSecurity(options?: { userId?: string; watermark?: boolean }): () => void {
-  const cleanups: Array<() => void> = [];
-
-  // Console warning
-  printConsoleWarning();
-
-  // DevTools detection (check every 2s)
-  const devToolsInterval = setInterval(() => detectDevTools(), 2000);
-  cleanups.push(() => clearInterval(devToolsInterval));
-
-  // Watermark (if user is authenticated)
-  if (options?.watermark && options?.userId) {
-    cleanups.push(applyWatermark(options.userId));
-  }
-
-  // Disable drag on images (prevents easy image saving)
-  const imgHandler = (e: DragEvent) => {
-    if ((e.target as HTMLElement)?.tagName === 'IMG') {
-      e.preventDefault();
+  // Detect DevTools open (timing-based)
+  let devtoolsOpen = false;
+  const threshold = 160;
+  const check = () => {
+    const widthDiff = window.outerWidth - window.innerWidth > threshold;
+    const heightDiff = window.outerHeight - window.innerHeight > threshold;
+    if (widthDiff || heightDiff) {
+      if (!devtoolsOpen) {
+        devtoolsOpen = true;
+        console.clear();
+        console.log('%c\u26A0\uFE0F SECURITY WARNING', 'color: red; font-size: 24px; font-weight: bold;');
+        console.log('%cThis browser feature is intended for developers. If someone told you to paste something here, they are trying to compromise your account.', 'font-size: 14px;');
+      }
+    } else {
+      devtoolsOpen = false;
     }
   };
-  document.addEventListener('dragstart', imgHandler);
-  cleanups.push(() => document.removeEventListener('dragstart', imgHandler));
+  setInterval(check, 1000);
 
-  return () => cleanups.forEach((fn) => fn());
+  // Disable text selection on sensitive elements
+  const style = document.createElement('style');
+  style.textContent = `
+    [data-sensitive] {
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// === WEBSOCKET SECURITY ===
+export function validateWSMessage(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false;
+
+  const msg = data as Record<string, unknown>;
+
+  // Must have expected fields
+  if (!msg.type || !msg.timestamp) return false;
+
+  // Type must be one of known types
+  const validTypes = ['convergence', 'detection', 'tasking', 'platform_status', 'heartbeat'];
+  if (!validTypes.includes(msg.type as string)) return false;
+
+  // Message size limit (prevent memory bombs)
+  const serialized = JSON.stringify(data);
+  if (serialized.length > 65536) { // 64KB max per message
+    console.warn('[GZM-SEC] WebSocket message exceeds size limit');
+    return false;
+  }
+
+  // Timestamp must be recent (within 5 minutes, prevents replay attacks)
+  const ts = new Date(msg.timestamp as string).getTime();
+  const now = Date.now();
+  if (Math.abs(now - ts) > 5 * 60 * 1000) {
+    console.warn('[GZM-SEC] WebSocket message has stale timestamp');
+    return false;
+  }
+
+  return true;
+}
+
+// === CONTENT INTEGRITY ===
+// Verify response hasn't been tampered with (when backend provides hash)
+export function verifyResponseIntegrity(data: unknown, expectedHash?: string): boolean {
+  if (!expectedHash) return true; // No hash provided, skip check
+
+  // Simple checksum (production would use HMAC)
+  const serialized = JSON.stringify(data);
+  let hash = 0;
+  for (let i = 0; i < serialized.length; i++) {
+    const char = serialized.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return hash.toString(36) === expectedHash;
+}
+
+// === ENVIRONMENT VALIDATION ===
+export function validateEnvironment(): void {
+  if (typeof window === 'undefined') return;
+
+  // Ensure we're running on expected origin
+  const allowedOrigins = [
+    'https://grayzonemonitor.com',
+    'http://localhost:3000',
+    'http://localhost:3001',
+  ];
+
+  if (process.env.NODE_ENV === 'production' && !allowedOrigins.includes(window.location.origin)) {
+    console.error('[GZM-SEC] Running on unauthorized origin:', window.location.origin);
+    document.body.innerHTML = '<h1>Unauthorized</h1>';
+  }
+}
+
+// === CLIPBOARD PROTECTION ===
+// Prevent copying sensitive data (entity IDs, coordinates, etc.)
+export function protectClipboard(): void {
+  if (typeof window === 'undefined') return;
+  if (process.env.NODE_ENV !== 'production') return;
+
+  document.addEventListener('copy', (e) => {
+    const selection = window.getSelection()?.toString() || '';
+
+    // If copying something that looks like coordinates or entity IDs, watermark it
+    if (/GZM-ENT-\d+/.test(selection) || /\d+\.\d+\u00b0[NS]/.test(selection)) {
+      const watermarked = `${selection}\n[Copied from Gray Zone Monitor - ${new Date().toISOString()}]`;
+      e.clipboardData?.setData('text/plain', watermarked);
+      e.preventDefault();
+    }
+  });
 }

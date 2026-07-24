@@ -1,94 +1,160 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { gzmApi, type GZMAlert } from '@/lib/api';
+import { useState } from 'react';
 
-const DOMAINS = ['sanctions', 'conflict', 'cyber', 'economic', 'other'] as const;
+interface TimelineEvent {
+  id: string;
+  timestamp: string;
+  domain: 'conflict' | 'sanctions' | 'cyber' | 'economic' | 'maritime';
+  title: string;
+  severity: number;
+  entity?: string;
+}
+
+const EVENTS: TimelineEvent[] = [
+  { id: 't1', timestamp: '2026-07-24T18:05:00Z', domain: 'maritime', title: 'RAVEN-01 on station for visual confirm', severity: 0.7, entity: 'MV CASPIAN STAR' },
+  { id: 't2', timestamp: '2026-07-24T17:58:00Z', domain: 'maritime', title: 'CBBA task allocation: ISR-REQ-0447', severity: 0.8, entity: 'MV CASPIAN STAR' },
+  { id: 't3', timestamp: '2026-07-24T17:45:00Z', domain: 'conflict', title: 'HF radio burst anomaly in Black Sea grid', severity: 0.75 },
+  { id: 't4', timestamp: '2026-07-24T17:30:00Z', domain: 'sanctions', title: 'OFAC SDN link confirmed via ownership chain', severity: 0.85, entity: 'MV CASPIAN STAR' },
+  { id: 't5', timestamp: '2026-07-24T17:15:00Z', domain: 'economic', title: 'Wire $2.3M Dubai to Bandar Abbas', severity: 0.7, entity: 'Al-Rashid Trading FZE' },
+  { id: 't6', timestamp: '2026-07-24T16:45:00Z', domain: 'maritime', title: 'AIS transponder goes dark', severity: 0.9, entity: 'MV CASPIAN STAR' },
+  { id: 't7', timestamp: '2026-07-24T16:00:00Z', domain: 'cyber', title: 'Port network scan detected from Bandar Abbas', severity: 0.5 },
+  { id: 't8', timestamp: '2026-07-24T14:30:00Z', domain: 'conflict', title: 'Military transport C-17A route deviation', severity: 0.6 },
+  { id: 't9', timestamp: '2026-07-24T12:00:00Z', domain: 'sanctions', title: 'Shell company registration flagged in Dubai', severity: 0.55, entity: 'Dubai Shell Corp' },
+  { id: 't10', timestamp: '2026-07-24T08:00:00Z', domain: 'economic', title: 'Unusual bulk cargo booking Bandar Abbas', severity: 0.4 },
+  { id: 't11', timestamp: '2026-07-23T22:00:00Z', domain: 'maritime', title: 'Vessel departed Sevastopol without manifest', severity: 0.65, entity: 'MV CASPIAN STAR' },
+  { id: 't12', timestamp: '2026-07-23T18:00:00Z', domain: 'cyber', title: 'Darknet forum post mentions Bandar Abbas shipment', severity: 0.45 },
+];
+
+const DOMAINS = ['conflict', 'sanctions', 'cyber', 'economic', 'maritime'] as const;
 const DOMAIN_COLORS: Record<string, string> = {
-  sanctions: '#ef4444',
-  conflict: '#f59e0b',
-  cyber: '#a855f7',
-  economic: '#10b981',
-  other: '#6b7280',
+  conflict: 'var(--red)',
+  sanctions: 'var(--purple)',
+  cyber: 'var(--accent)',
+  economic: 'var(--amber)',
+  maritime: 'var(--blue)',
 };
 
 export default function TimelinePage() {
-  const [alerts, setAlerts] = useState<GZMAlert[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [activeDomains, setActiveDomains] = useState<Set<string>>(new Set(DOMAINS));
+  const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
 
-  useEffect(() => {
-    const load = async () => {
-      const data = await gzmApi.alerts(200);
-      if (data) setAlerts(data.alerts || []);
-      setLoading(false);
-    };
-    load();
-  }, []);
+  const toggleDomain = (d: string) => {
+    const next = new Set(activeDomains);
+    next.has(d) ? next.delete(d) : next.add(d);
+    setActiveDomains(next);
+  };
 
-  // Bucket alerts into domain lanes
-  const lanes = DOMAINS.map(domain => {
-    const items = alerts.filter(a => {
-      const vt = (a.vertex_type || a.source || '').toLowerCase();
-      if (domain === 'sanctions') return vt.includes('sanction') || vt.includes('sdn') || vt.includes('pep');
-      if (domain === 'conflict') return vt.includes('conflict') || vt.includes('acled') || vt.includes('event');
-      if (domain === 'cyber') return vt.includes('cyber') || vt.includes('threat') || vt.includes('convergence');
-      if (domain === 'economic') return vt.includes('market') || vt.includes('economic') || vt.includes('gpr');
-      return true;
-    });
-    return { domain, items, color: DOMAIN_COLORS[domain] };
-  });
+  const filtered = EVENTS.filter((e) => activeDomains.has(e.domain));
+
+  const earliest = new Date('2026-07-23T08:00:00Z').getTime();
+  const latest = new Date('2026-07-24T19:00:00Z').getTime();
+  const range = latest - earliest;
+
+  const getPosition = (ts: string) => ((new Date(ts).getTime() - earliest) / range) * 100;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <h1 className="text-[20px] font-bold text-white tracking-tight mb-1">Temporal Analysis</h1>
-      <p className="text-[12px] mb-6" style={{ color: 'rgba(240,240,255,0.45)' }}>
-        Cross-domain signal timeline \u00b7 5 intelligence lanes \u00b7 Temporal decay visualization
-      </p>
-
-      {loading && <div className="text-[12px] animate-pulse py-12 text-center" style={{ color: 'rgba(240,240,255,0.35)' }}>Loading temporal data...</div>}
-
-      {!loading && (
-        <div className="space-y-4">
-          {lanes.map(({ domain, items, color }) => (
-            <div key={domain}>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-2.5 h-2.5 rounded-full" style={{ background: color }} />
-                <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color }}>{domain}</span>
-                <span className="text-[9px] font-mono tabular-nums" style={{ color: 'rgba(240,240,255,0.25)' }}>
-                  {items.length} signals
-                </span>
-              </div>
-              <div
-                className="relative h-12 rounded-lg overflow-hidden"
-                style={{ background: `${color}08`, border: `1px solid ${color}20` }}
-              >
-                {/* Signal dots distributed across the lane */}
-                {items.slice(0, 50).map((item, i) => (
-                  <div
-                    key={item.vertex_id || i}
-                    className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full hover:scale-150 transition-transform cursor-pointer"
-                    style={{
-                      left: `${(i / Math.max(items.length, 1)) * 95 + 2}%`,
-                      background: color,
-                      opacity: 0.6 + (item.score || 0.3) * 0.4,
-                    }}
-                    title={`${item.name || item.vertex_id} (${item.country || '?'})`}
-                  />
-                ))}
-                {items.length === 0 && (
-                  <div className="absolute inset-0 flex items-center justify-center text-[10px]" style={{ color: `${color}60` }}>
-                    No signals in this domain
-                  </div>
-                )}
-              </div>
-            </div>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* Header */}
+      <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h1 style={{ fontSize: 'var(--text-md)', fontWeight: 700 }}>Temporal Analysis</h1>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          {DOMAINS.map((d) => (
+            <button
+              key={d}
+              onClick={() => toggleDomain(d)}
+              style={{
+                padding: '4px 10px', fontSize: '10px', borderRadius: '4px', cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.04em', textTransform: 'uppercase',
+                border: '1px solid',
+                borderColor: activeDomains.has(d) ? DOMAIN_COLORS[d] : 'var(--border-default)',
+                background: activeDomains.has(d) ? 'var(--surface-3)' : 'transparent',
+                color: activeDomains.has(d) ? DOMAIN_COLORS[d] : 'var(--text-muted)',
+              }}
+            >{d}</button>
           ))}
         </div>
-      )}
-
-      <div className="mt-8 text-[10px]" style={{ color: 'rgba(240,240,255,0.2)' }}>
-        Next: D3.js temporal visualization with date range selector, zoom/pan, and event detail on hover
       </div>
+
+      {/* Swim Lanes */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
+        <div style={{ position: 'relative', minHeight: '100%' }}>
+          {/* Time axis */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
+            <span>Jul 23 08:00Z</span>
+            <span>Jul 23 18:00Z</span>
+            <span>Jul 24 04:00Z</span>
+            <span>Jul 24 12:00Z</span>
+            <span>Jul 24 19:00Z</span>
+          </div>
+
+          {/* Lanes */}
+          {DOMAINS.filter((d) => activeDomains.has(d)).map((domain) => {
+            const domainEvents = filtered.filter((e) => e.domain === domain);
+            return (
+              <div key={domain} style={{ display: 'flex', alignItems: 'center', marginBottom: '12px', height: '44px' }}>
+                <div style={{
+                  width: '90px', fontSize: '10px', fontWeight: 600, textTransform: 'uppercase',
+                  letterSpacing: '0.06em', color: DOMAIN_COLORS[domain], flexShrink: 0,
+                }}>{domain}</div>
+                <div style={{ flex: 1, position: 'relative', height: '100%', background: 'var(--surface-1)', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                  {domainEvents.map((event) => {
+                    const left = getPosition(event.timestamp);
+                    const size = 8 + event.severity * 12;
+                    return (
+                      <div
+                        key={event.id}
+                        onClick={() => setSelectedEvent(event)}
+                        title={event.title}
+                        style={{
+                          position: 'absolute',
+                          left: `${left}%`,
+                          top: '50%',
+                          transform: 'translate(-50%, -50%)',
+                          width: `${size}px`,
+                          height: `${size}px`,
+                          borderRadius: '50%',
+                          background: DOMAIN_COLORS[domain],
+                          opacity: 0.7 + event.severity * 0.3,
+                          cursor: 'pointer',
+                          border: selectedEvent?.id === event.id ? '2px solid white' : 'none',
+                          transition: 'transform 150ms cubic-bezier(0.16,1,0.3,1)',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.transform = 'translate(-50%, -50%) scale(1.4)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.transform = 'translate(-50%, -50%) scale(1)')}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Event Detail */}
+      {selectedEvent && (
+        <div style={{
+          padding: '16px 20px', borderTop: '1px solid var(--border-subtle)',
+          background: 'var(--surface-1)', display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '16px', alignItems: 'center',
+        }}>
+          <div>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+              {new Date(selectedEvent.timestamp).toLocaleString('en-GB', { hour12: false })}
+            </span>
+            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', color: DOMAIN_COLORS[selectedEvent.domain], marginTop: '2px' }}>
+              {selectedEvent.domain}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: 600 }}>{selectedEvent.title}</div>
+            {selectedEvent.entity && <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Entity: {selectedEvent.entity}</div>}
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 700, color: selectedEvent.severity >= 0.7 ? 'var(--red)' : 'var(--amber)' }}>
+            {selectedEvent.severity.toFixed(2)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

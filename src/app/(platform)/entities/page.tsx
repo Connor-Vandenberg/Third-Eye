@@ -1,225 +1,124 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { gzmApi, type QueryResult, type DossierResponse } from '@/lib/api';
+import { useState, useMemo } from 'react';
+import { ConfidenceBar } from '@/components/confidence-bar';
+import { IntBadge } from '@/components/int-badge';
+import type { Entity } from '@/lib/types';
 
-const VERTEX_COLORS: Record<string, string> = {
-  SanctionsEntity: '#ef4444', SanctionedEntity: '#ef4444',
-  ThreatActor: '#a855f7', CyberEntity: '#a855f7',
-  Country: '#06b6d4', Organization: '#10b981',
-  Person: '#3b82f6', Vessel: '#38bdf8',
-  ConvergenceAlert: '#f97316', MilitaryFlight: '#8b5cf6',
-  GeopoliticalEvent: '#eab308', MarketSignal: '#34d399',
-};
+const MOCK_ENTITIES: Entity[] = [
+  { id: 'GZM-ENT-4471', name: 'MV CASPIAN STAR', type: 'Maritime Vessel', threat_score: 0.87, confidence: 0.64, convergence_score: 0.91, last_observed: '2026-07-24T14:22:00Z', location: { lat: 34.05, lon: -118.24 }, sources: [{ discipline: 'OSINT', detail: 'AIS transponder dark since 14:22Z', timestamp: '4.2h', confidence: 0.9 }, { discipline: 'SIGINT', detail: 'HF burst 8.291MHz detected', timestamp: '2.1h', confidence: 0.7 }, { discipline: 'MASINT', detail: 'SAR return confirmed at location', timestamp: '1.8h', confidence: 0.85 }] },
+  { id: 'GZM-ENT-3891', name: 'Al-Rashid Trading FZE', type: 'Organization', threat_score: 0.72, confidence: 0.81, convergence_score: 0.67, last_observed: '2026-07-24T12:00:00Z', sources: [{ discipline: 'OSINT', detail: 'OFAC SDN ownership chain match', timestamp: '12d', confidence: 0.82 }, { discipline: 'FININT', detail: 'Wire transfer to sanctioned port agent', timestamp: '3d', confidence: 0.75 }] },
+  { id: 'GZM-ENT-5102', name: 'Bandar Abbas Port Complex', type: 'Facility', threat_score: 0.55, confidence: 0.73, convergence_score: 0.58, last_observed: '2026-07-24T16:00:00Z', sources: [{ discipline: 'GEOINT', detail: 'Satellite imagery shows increased activity', timestamp: '6h', confidence: 0.7 }] },
+  { id: 'GZM-ENT-2744', name: 'Captain Mohammad Ahmadi', type: 'Person', threat_score: 0.48, confidence: 0.55, convergence_score: 0.33, last_observed: '2026-07-20T09:00:00Z', sources: [{ discipline: 'HUMINT', detail: 'Port records show as vessel master', timestamp: '4d', confidence: 0.6 }] },
+  { id: 'GZM-ENT-6233', name: 'Dubai Shell Corporation Ltd', type: 'Organization', threat_score: 0.65, confidence: 0.70, convergence_score: 0.52, last_observed: '2026-07-22T14:00:00Z', sources: [{ discipline: 'FININT', detail: 'Shell company registered 2024, no employees', timestamp: '2d', confidence: 0.8 }, { discipline: 'OSINT', detail: 'Director linked to IRGC network', timestamp: '12d', confidence: 0.6 }] },
+  { id: 'GZM-ENT-1899', name: 'Black Sea HF Emitter', type: 'Signal', threat_score: 0.60, confidence: 0.42, convergence_score: 0.45, last_observed: '2026-07-24T17:45:00Z', sources: [{ discipline: 'SIGINT', detail: '4x normal HF activity since 0600Z', timestamp: '20m', confidence: 0.65 }] },
+  { id: 'GZM-ENT-7811', name: 'Suspected Arms Depot Facility', type: 'Facility', threat_score: 0.78, confidence: 0.38, convergence_score: 0.72, last_observed: '2026-07-23T08:00:00Z', sources: [{ discipline: 'IMINT', detail: 'Drone detection pending confirmation', timestamp: 'PEND', confidence: 0.4 }, { discipline: 'SIGINT', detail: 'RF activity consistent with military comms', timestamp: '1d', confidence: 0.5 }] },
+  { id: 'GZM-ENT-9045', name: 'IRGC Quds Force Network', type: 'Organization', threat_score: 0.92, confidence: 0.88, convergence_score: 0.95, last_observed: '2026-07-24T11:00:00Z', sources: [{ discipline: 'OSINT', detail: 'Treasury designation, multiple fronts identified', timestamp: '30d', confidence: 0.95 }, { discipline: 'SIGINT', detail: 'Comms intercept linking to vessel operations', timestamp: '5d', confidence: 0.7 }, { discipline: 'HUMINT', detail: 'Source reporting on logistics chain', timestamp: '14d', confidence: 0.6 }] },
+];
+
+type SortKey = 'name' | 'threat_score' | 'confidence' | 'convergence_score' | 'last_observed';
 
 export default function EntitiesPage() {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<QueryResult['results']>([]);
-  const [loading, setLoading] = useState(false);
-  const [selectedEntity, setSelectedEntity] = useState<DossierResponse | null>(null);
-  const [dossierLoading, setDossierLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('threat_score');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
 
-  const handleSearch = useCallback(async () => {
-    if (!query.trim()) return;
-    setLoading(true);
-    setSelectedEntity(null);
-    const data = await gzmApi.query(query.trim());
-    setResults(data?.results || []);
-    setLoading(false);
-  }, [query]);
+  const types = useMemo(() => ['all', ...new Set(MOCK_ENTITIES.map((e) => e.type))], []);
 
-  const loadDossier = useCallback(async (name: string) => {
-    setDossierLoading(true);
-    const data = await gzmApi.dossier(name);
-    if (data) setSelectedEntity(data);
-    setDossierLoading(false);
-  }, []);
+  const sorted = useMemo(() => {
+    let data = MOCK_ENTITIES.filter((e) =>
+      (typeFilter === 'all' || e.type === typeFilter) &&
+      (search === '' || e.name.toLowerCase().includes(search.toLowerCase()) || e.id.toLowerCase().includes(search.toLowerCase()))
+    );
+    data.sort((a, b) => {
+      const av = a[sortKey] as any;
+      const bv = b[sortKey] as any;
+      if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === 'asc' ? av - bv : bv - av;
+    });
+    return data;
+  }, [search, sortKey, sortDir, typeFilter]);
 
-  const riskColor = (score: number) =>
-    score > 0.7 ? '#ef4444' : score > 0.4 ? '#f59e0b' : '#10b981';
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('desc'); }
+  };
+
+  const SortHeader = ({ label, field }: { label: string; field: SortKey }) => (
+    <th onClick={() => handleSort(field)} style={{ padding: '10px 12px', textAlign: 'left', cursor: 'pointer', fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: sortKey === field ? 'var(--accent)' : 'var(--text-muted)', userSelect: 'none', whiteSpace: 'nowrap' }}>
+      {label} {sortKey === field ? (sortDir === 'desc' ? '\u25BC' : '\u25B2') : ''}
+    </th>
+  );
 
   return (
-    <div className="flex h-[calc(100vh-40px)]">
-      {/* Left: Search + Results */}
-      <div className="flex-1 p-6 overflow-y-auto">
-        <h1 className="text-[20px] font-bold text-white tracking-tight mb-1">Entity Intelligence</h1>
-        <p className="text-[12px] mb-5" style={{ color: 'rgba(240,240,255,0.45)' }}>
-          Search across 78 vertex types \u00b7 13M+ entities \u00b7 44.5M relationships
-        </p>
-
-        {/* Search */}
-        <div className="flex gap-2 mb-6">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            placeholder="Search: OVLAS TRADING, APT28, Russia, Iran..."
-            className="flex-1 px-4 py-2.5 rounded-lg text-[12px] text-white placeholder:text-[rgba(240,240,255,0.25)] outline-none focus:ring-1 focus:ring-cyan-500/40"
-            style={{ background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.06)' }}
-          />
-          <button
-            onClick={handleSearch}
-            disabled={loading}
-            className="px-5 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wide transition-opacity hover:opacity-85 disabled:opacity-50"
-            style={{ background: '#22d3ee', color: '#0a0a0f' }}
-          >
-            {loading ? 'Searching...' : 'Search Graph'}
-          </button>
-        </div>
-
-        {/* Results */}
-        {results.length > 0 && (
-          <div className="space-y-1">
-            <div className="text-[10px] mb-2" style={{ color: 'rgba(240,240,255,0.3)' }}>
-              {results.length} results
-            </div>
-            {results.map((r, i) => {
-              const color = VERTEX_COLORS[r.vertex_type || ''] || '#6b7280';
-              return (
-                <button
-                  key={r.vertex_id || i}
-                  onClick={() => loadDossier(r.name || r.vertex_id || '')}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left hover:bg-[rgba(255,255,255,0.03)] transition-colors"
-                  style={{ background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.04)' }}
-                >
-                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${color}15`, color }}>
-                    {r.vertex_type || '?'}
-                  </span>
-                  <span className="text-[13px] text-white font-medium truncate flex-1">
-                    {r.name || r.vertex_id}
-                  </span>
-                  {r.country && (
-                    <span className="text-[10px] flex-shrink-0" style={{ color: 'rgba(240,240,255,0.35)' }}>
-                      {r.country}
-                    </span>
-                  )}
-                  {r.connections && (
-                    <span className="text-[9px] font-mono tabular-nums flex-shrink-0" style={{ color: 'rgba(240,240,255,0.25)' }}>
-                      {r.connections} links
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {!loading && results.length === 0 && query && (
-          <div className="text-center py-16 text-[12px]" style={{ color: 'rgba(240,240,255,0.3)' }}>
-            No entities found. Try: "Russia", "APT28", "OVLAS TRADING"
-          </div>
-        )}
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* Header */}
+      <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <h1 style={{ fontSize: 'var(--text-md)', fontWeight: 700, marginRight: '16px' }}>Entities</h1>
+        <input
+          type="text" placeholder="Search by name or ID..."
+          value={search} onChange={(e) => setSearch(e.target.value)}
+          style={{ background: 'var(--surface-2)', border: '1px solid var(--border-default)', borderRadius: '6px', padding: '8px 12px', fontSize: '13px', color: 'var(--text-primary)', width: '240px', outline: 'none' }}
+        />
+        <select
+          value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+          style={{ background: 'var(--surface-2)', border: '1px solid var(--border-default)', borderRadius: '6px', padding: '8px 12px', fontSize: '12px', color: 'var(--text-secondary)', cursor: 'pointer' }}
+        >
+          {types.map((t) => <option key={t} value={t}>{t === 'all' ? 'All Types' : t}</option>)}
+        </select>
+        <div style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-muted)' }}>{sorted.length} results</div>
       </div>
 
-      {/* Right: Dossier Panel (Intelligence Card) */}
-      {selectedEntity && (
-        <div
-          className="w-[380px] flex-shrink-0 overflow-y-auto p-5"
-          style={{ background: '#0d0d18', borderLeft: '1px solid rgba(255,255,255,0.06)' }}
-        >
-          {dossierLoading ? (
-            <div className="text-[12px] animate-pulse" style={{ color: 'rgba(240,240,255,0.4)' }}>Loading dossier...</div>
-          ) : (
-            <>
-              <button onClick={() => setSelectedEntity(null)} className="text-[11px] mb-4 hover:text-white" style={{ color: 'rgba(240,240,255,0.4)' }}>
-                \u2715 Close
-              </button>
-
-              <h2 className="text-[16px] font-bold text-white mb-1 break-words">{selectedEntity.entity_name}</h2>
-              <div className="text-[9px] uppercase tracking-wider mb-5" style={{ color: 'rgba(240,240,255,0.3)' }}>
-                {selectedEntity.labels?.join(' \u00b7 ')}
-              </div>
-
-              {/* Risk Score */}
-              {selectedEntity.risk_score != null && (
-                <div className="mb-5">
-                  <div className="flex justify-between text-[9px] uppercase tracking-wide mb-1" style={{ color: 'rgba(240,240,255,0.3)' }}>
-                    <span>Risk Score</span>
-                    <span style={{ color: riskColor(selectedEntity.risk_score) }}>
-                      {(selectedEntity.risk_score * 100).toFixed(0)}/100
-                    </span>
-                  </div>
-                  <div className="text-[28px] font-bold tabular-nums mb-2" style={{ color: riskColor(selectedEntity.risk_score) }}>
-                    {selectedEntity.risk_score.toFixed(3)}
-                  </div>
-                  <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{ width: `${Math.min(100, selectedEntity.risk_score * 100)}%`, background: riskColor(selectedEntity.risk_score) }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Key Facts */}
-              <div className="space-y-1.5 mb-5">
-                <Fact label="Connections" value={String(selectedEntity.connections || 0)} />
-                <Fact label="Sources" value={String(selectedEntity.sources?.length || 0)} />
-                <Fact label="Confidence" value={selectedEntity.confidence_grade || '\u2014'} />
-                {selectedEntity.sanctions_status && (
-                  <Fact label="Sanctions" value={selectedEntity.sanctions_status.program} color="#ef4444" />
-                )}
-                {selectedEntity.network_risk != null && (
-                  <Fact label="Network Risk" value={`${(selectedEntity.network_risk).toFixed(1)}`} />
-                )}
-                {selectedEntity.evidence_count != null && (
-                  <Fact label="Evidence Items" value={String(selectedEntity.evidence_count)} />
-                )}
-              </div>
-
-              {/* Domains */}
-              {selectedEntity.domains_present?.length > 0 && (
-                <div className="mb-5">
-                  <div className="text-[9px] uppercase tracking-wide mb-2" style={{ color: 'rgba(240,240,255,0.3)', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '4px' }}>
-                    Active Domains
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedEntity.domains_present.map(d => (
-                      <span key={d} className="text-[8px] font-bold uppercase px-2 py-0.5 rounded" style={{ background: 'rgba(34,211,238,0.08)', color: '#22d3ee' }}>
-                        {d}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Relationships */}
-              {selectedEntity.offshore_connections?.length > 0 && (
-                <div>
-                  <div className="text-[9px] uppercase tracking-wide mb-2" style={{ color: 'rgba(240,240,255,0.3)', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '4px' }}>
-                    Relationships ({selectedEntity.offshore_connections.length})
-                  </div>
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
-                    {selectedEntity.offshore_connections.slice(0, 20).map((rel, i) => (
-                      <button
-                        key={i}
-                        onClick={() => loadDossier(rel.target_id)}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[10px] hover:bg-[rgba(255,255,255,0.03)] transition-colors"
-                      >
-                        <span className="font-mono text-[8px] px-1 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(240,240,255,0.4)' }}>
-                          {rel.edge_type?.substring(0, 12)}
-                        </span>
-                        <span className="truncate" style={{ color: '#22d3ee' }}>{rel.target_id}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Fact({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="flex justify-between text-[11px] py-1" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-      <span style={{ color: 'rgba(240,240,255,0.4)' }}>{label}</span>
-      <span className="font-semibold tabular-nums" style={{ color: color || 'white' }}>{value}</span>
+      {/* Table */}
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead style={{ position: 'sticky', top: 0, background: 'var(--surface-1)', zIndex: 1 }}>
+            <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+              <SortHeader label="Entity" field="name" />
+              <th style={{ padding: '10px 12px', fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>Type</th>
+              <SortHeader label="Threat" field="threat_score" />
+              <SortHeader label="Confidence" field="confidence" />
+              <SortHeader label="Convergence" field="convergence_score" />
+              <th style={{ padding: '10px 12px', fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>Sources</th>
+              <SortHeader label="Last Seen" field="last_observed" />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((entity) => {
+              const threatColor = entity.threat_score >= 0.8 ? 'var(--red)' : entity.threat_score >= 0.5 ? 'var(--amber)' : 'var(--green)';
+              const timeSince = Math.round((Date.now() - new Date(entity.last_observed).getTime()) / 3600000);
+              return (
+                <tr key={entity.id} style={{ borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer', transition: 'background 100ms' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                  <td style={{ padding: '12px' }}>
+                    <div style={{ fontWeight: 600, fontSize: '13px' }}>{entity.name}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>{entity.id}</div>
+                  </td>
+                  <td style={{ padding: '12px', fontSize: '11px', color: 'var(--text-secondary)' }}>{entity.type}</td>
+                  <td style={{ padding: '12px' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 700, color: threatColor }}>{entity.threat_score.toFixed(2)}</span>
+                  </td>
+                  <td style={{ padding: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <ConfidenceBar value={entity.confidence} width={48} />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-secondary)' }}>{entity.confidence.toFixed(2)}</span>
+                    </div>
+                  </td>
+                  <td style={{ padding: '12px' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 600, color: entity.convergence_score >= 0.8 ? 'var(--red)' : 'var(--text-secondary)' }}>{entity.convergence_score.toFixed(2)}</span>
+                  </td>
+                  <td style={{ padding: '12px' }}>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {entity.sources.map((s, i) => <IntBadge key={i} discipline={s.discipline} size="xs" />)}
+                    </div>
+                  </td>
+                  <td style={{ padding: '12px', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>{timeSince}h ago</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
