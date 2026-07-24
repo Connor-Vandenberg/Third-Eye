@@ -1,139 +1,72 @@
-/**
- * GZM WebSocket Manager
- *
- * Reconnecting WebSocket with:
- * - Exponential backoff (1s → 2s → 4s → 8s → 16s max)
- * - Heartbeat/pong handling
- * - Event bus pattern (subscribe/unsubscribe)
- * - Connection state tracking
- * - Auto-reconnect on close/error
- * - Message type discrimination
- */
+type MessageHandler = (data: unknown) => void;
 
-import { gzmApi } from './api';
-
-export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
-
-export interface WsAlert {
-  type: 'alert';
-  alert_id?: string;
-  entity?: string;
-  name?: string;
-  severity?: string;
-  convergence_score?: number;
-  score?: number;
-  country?: string;
-  domain_count?: number;
-  vertex_type?: string;
-  created_at?: string;
-}
-
-export interface WsHeartbeat {
-  type: 'heartbeat';
-  active_alerts?: number;
-  critical?: number;
-  connections?: number;
-}
-
-export interface WsConnected {
-  type: 'connected';
-  message?: string;
-}
-
-export type WsMessage = WsAlert | WsHeartbeat | WsConnected | { type: string; [key: string]: unknown };
-
-type Listener = (msg: WsMessage) => void;
-
-class GZMWebSocket {
+export class GZMWebSocket {
   private ws: WebSocket | null = null;
-  private listeners: Set<Listener> = new Set();
-  private reconnectAttempt = 0;
-  private maxReconnectDelay = 16000;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private _state: ConnectionState = 'disconnected';
-  private intentionalClose = false;
+  private url: string;
+  private reconnectDelay = 1000;
+  private maxDelay = 16000;
+  private listeners: Set<MessageHandler> = new Set();
+  private shouldReconnect = true;
 
-  get state(): ConnectionState {
-    return this._state;
+  constructor(url?: string) {
+    this.url = url || (process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/alerts');
+    this.connect();
   }
 
-  connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
-      return;
-    }
-
-    this.intentionalClose = false;
-    this._state = this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting';
-    this.notifyState();
+  private connect(): void {
+    if (!this.shouldReconnect) return;
 
     try {
-      this.ws = new WebSocket(gzmApi.alertsWsUrl());
+      this.ws = new WebSocket(this.url);
 
       this.ws.onopen = () => {
-        this._state = 'connected';
-        this.reconnectAttempt = 0;
-        this.notifyState();
+        this.reconnectDelay = 1000;
+        console.log('[GZM-WS] Connected');
       };
 
       this.ws.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data) as WsMessage;
-          this.listeners.forEach((fn) => fn(msg));
-        } catch { /* ignore malformed messages */ }
-      };
-
-      this.ws.onclose = () => {
-        this._state = 'disconnected';
-        this.notifyState();
-        if (!this.intentionalClose) {
-          this.scheduleReconnect();
+          const data = JSON.parse(event.data);
+          this.listeners.forEach((fn) => fn(data));
+        } catch (e) {
+          console.warn('[GZM-WS] Failed to parse message:', e);
         }
       };
 
-      this.ws.onerror = () => {
-        // onclose will fire after this
+      this.ws.onclose = () => {
+        console.log(`[GZM-WS] Disconnected. Reconnecting in ${this.reconnectDelay}ms`);
+        setTimeout(() => this.connect(), this.reconnectDelay);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxDelay);
       };
-    } catch {
-      this._state = 'disconnected';
-      this.scheduleReconnect();
+
+      this.ws.onerror = (error) => {
+        console.error('[GZM-WS] Error:', error);
+        this.ws?.close();
+      };
+    } catch (e) {
+      console.error('[GZM-WS] Connection failed:', e);
+      setTimeout(() => this.connect(), this.reconnectDelay);
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxDelay);
     }
   }
 
-  disconnect(): void {
-    this.intentionalClose = true;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+  subscribe(fn: MessageHandler): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  send(data: unknown): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(data));
     }
+  }
+
+  get connected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  close(): void {
+    this.shouldReconnect = false;
     this.ws?.close();
-    this.ws = null;
-    this._state = 'disconnected';
-  }
-
-  subscribe(listener: Listener): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-
-  private scheduleReconnect(): void {
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempt), this.maxReconnectDelay);
-    this.reconnectAttempt++;
-    this._state = 'reconnecting';
-
-    this.reconnectTimer = setTimeout(() => {
-      this.connect();
-    }, delay);
-  }
-
-  private notifyState(): void {
-    // Emit a synthetic state message so listeners can react to connection changes
-    const stateMsg: WsMessage = { type: `_state_${this._state}` };
-    this.listeners.forEach((fn) => fn(stateMsg));
   }
 }
-
-// Singleton instance
-export const gzmWs = new GZMWebSocket();
-export default gzmWs;
