@@ -35,6 +35,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
       const shortcuts: Record<string, string> = {
         g: '/', i: '/intel', e: '/entities', x: '/graph',
         t: '/timeline', p: '/platforms', r: '/reports', a: '/alerts',
+        b: '/briefs', c: '/cases', m: '/mesh', n: '/agents',
       };
       const path = shortcuts[e.key.toLowerCase()];
       if (path) {
@@ -48,10 +49,10 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
 
   // Live stats from backend (falls back to defaults)
   const displayStats = [
-    { value: stats?.node_count ? `${Math.round(stats.node_count / 1000)}K` : '146', label: 'Collectors' },
-    { value: stats?.relationship_count ? `${Math.round(stats.relationship_count / 1000)}K` : '1,347', label: 'Signals' },
-    { value: '12', label: 'Platforms' },
-    { value: '4', label: 'ISR Tasks' },
+    { value: stats?.node_count ? `${Math.round(stats.node_count / 1000)}K` : '165', label: 'Collectors' },
+    { value: stats?.relationship_count ? `${Math.round(stats.relationship_count / 1000)}K` : '1,340', label: 'Signals' },
+    { value: stats?.engine_count || '89', label: 'Engines' },
+    { value: stats?.agent_count || '8', label: 'Agents' },
   ];
 
   return (
