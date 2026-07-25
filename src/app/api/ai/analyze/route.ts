@@ -1,227 +1,108 @@
 /**
- * ═══════════════════════════════════════════════════════════════
- *  THIRD EYE — AI Intelligence Analysis Endpoint
- *  POST /api/ai/analyze
- *  Rate-limited, multi-key Gemini integration
- * ═══════════════════════════════════════════════════════════════
+ * AI Analysis API Route — Proxies to GZM Python Backend.
+ * 
+ * Priority order:
+ * 1. GZM Backend (/aip/query) — full 70+ tool multi-step reasoning
+ * 2. Fallback to Gemini if backend is unreachable
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  createGeminiClient,
-  rotateApiKey,
-  analyzeIntelligence,
-  type IntelligenceContext,
-} from '@/lib/ai-engine';
 
-export const dynamic = 'force-dynamic';
+const GZM_BACKEND = process.env.GZM_BACKEND_URL || 'http://localhost:8000';
 
-/* ─────────────────────────────────────────────────────────────
-   Rate Limiter — 5 requests per minute per IP
-   ───────────────────────────────────────────────────────────── */
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { query, context } = body;
 
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
-
-const rateLimitMap = new Map<string, RateLimitEntry>();
-const RATE_LIMIT_MAX = 5;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-
-function checkRateLimit(ip: string): { allowed: boolean; remaining: number; resetIn: number } {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return { allowed: true, remaining: RATE_LIMIT_MAX - 1, resetIn: RATE_LIMIT_WINDOW_MS };
-  }
-
-  if (entry.count >= RATE_LIMIT_MAX) {
-    return { allowed: false, remaining: 0, resetIn: entry.resetAt - now };
-  }
-
-  entry.count++;
-  return { allowed: true, remaining: RATE_LIMIT_MAX - entry.count, resetIn: entry.resetAt - now };
-}
-
-// Periodic cleanup to prevent memory leaks
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of rateLimitMap.entries()) {
-    if (now > entry.resetAt) {
-      rateLimitMap.delete(ip);
+    if (!query) {
+      return NextResponse.json({ error: 'Missing query' }, { status: 400 });
     }
-  }
-}, 120_000);
 
-/* ─────────────────────────────────────────────────────────────
-   Collect API keys from environment
-   ───────────────────────────────────────────────────────────── */
+    // Try GZM Backend first (the real AIP with 70+ tools)
+    try {
+      const gzmResponse = await fetch(`${GZM_BACKEND}/aip/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          context: context || {},
+          include_raw: false,
+        }),
+        signal: AbortSignal.timeout(120000), // 2 min timeout for multi-step reasoning
+      });
 
-function getEnvApiKeys(): string[] {
-  const keys: string[] = [];
-  for (let i = 1; i <= 8; i++) {
-    const key = process.env[`GEMINI_API_KEY_${i}`];
-    if (key && key.trim().length > 0) {
-      keys.push(key.trim());
-    }
-  }
-  return keys;
-}
+      if (gzmResponse.ok) {
+        const data = await gzmResponse.json();
+        
+        // Format response to match what AiAnalyst.tsx expects
+        let analysis = data.narrative || 'No analysis generated.';
+        
+        if (data.entities_found > 0) {
+          analysis += `\n\n**${data.entities_found} entities** and **${data.connections_found} connections** found in the graph.`;
+        }
+        
+        if (data.follow_up_suggestions?.length > 0) {
+          analysis += '\n\n### Suggested Follow-ups\n' + data.follow_up_suggestions.map((s: string) => `- ${s}`).join('\n');
+        }
 
-/* ─────────────────────────────────────────────────────────────
-   Request / Response types
-   ───────────────────────────────────────────────────────────── */
+        if (data.confidence > 0) {
+          analysis += `\n\n*Confidence: ${Math.round(data.confidence * 100)}% | Model: ${data.model_used || 'unknown'} | Tokens: ${data.tokens_used || 0}*`;
+        }
 
-interface AnalyzeRequestBody {
-  query: string;
-  context: IntelligenceContext;
-}
-
-interface AnalyzeResponse {
-  analysis: string;
-  model: string;
-  timestamp: string;
-}
-
-interface ErrorResponse {
-  error: string;
-  code: string;
-  retryAfter?: number;
-}
-
-/* ─────────────────────────────────────────────────────────────
-   POST Handler
-   ───────────────────────────────────────────────────────────── */
-
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse<AnalyzeResponse | ErrorResponse>> {
-  // Extract client IP
-  const ip =
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    request.headers.get('x-real-ip') ||
-    'unknown';
-
-  // Rate limit check
-  const rateCheck = checkRateLimit(ip);
-  if (!rateCheck.allowed) {
-    return NextResponse.json(
-      {
-        error: 'Rate limit exceeded. Maximum 5 requests per minute.',
-        code: 'RATE_LIMITED',
-        retryAfter: Math.ceil(rateCheck.resetIn / 1000),
-      },
-      {
-        status: 429,
-        headers: {
-          'Retry-After': String(Math.ceil(rateCheck.resetIn / 1000)),
-          'X-RateLimit-Remaining': '0',
-          'X-RateLimit-Reset': String(Math.ceil(rateCheck.resetIn / 1000)),
-        },
+        return NextResponse.json({
+          analysis,
+          model: data.model_used || 'GZM AIP',
+          timestamp: data.timestamp || new Date().toISOString(),
+          source: 'gzm_backend',
+          raw: data, // Include raw response for advanced UI usage
+        });
       }
-    );
-  }
+    } catch (backendError) {
+      console.warn('[AI Route] GZM backend unreachable, falling back:', (backendError as Error).message);
+    }
 
-  // Determine API key — user-provided header takes priority
-  const userKey = request.headers.get('x-gemini-key')?.trim();
-  let apiKey: string;
-
-  if (userKey && userKey.length > 0) {
-    apiKey = userKey;
-  } else {
-    const envKeys = getEnvApiKeys();
-    if (envKeys.length === 0) {
+    // Fallback: Use Gemini directly if backend is down
+    const geminiKey = request.headers.get('x-gemini-key') || process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
       return NextResponse.json(
-        {
-          error:
-            'No Gemini API key configured. Set GEMINI_API_KEY_1 in environment or provide a key via the settings panel.',
-          code: 'NO_API_KEY',
-        },
+        { error: 'GZM backend is offline and no Gemini API key available. Start the backend with: uvicorn api.app:app --port 8000', code: 'NO_BACKEND' },
         { status: 503 }
       );
     }
-    apiKey = rotateApiKey(envKeys);
-  }
 
-  // Parse request body
-  let body: AnalyzeRequestBody;
-  try {
-    body = (await request.json()) as AnalyzeRequestBody;
-  } catch {
-    return NextResponse.json(
-      { error: 'Invalid JSON in request body.', code: 'INVALID_BODY' },
-      { status: 400 }
-    );
-  }
-
-  if (!body.query || typeof body.query !== 'string' || body.query.trim().length === 0) {
-    return NextResponse.json(
-      { error: 'Query field is required and must be a non-empty string.', code: 'MISSING_QUERY' },
-      { status: 400 }
-    );
-  }
-
-  if (!body.context) {
-    return NextResponse.json(
-      { error: 'Intelligence context is required.', code: 'MISSING_CONTEXT' },
-      { status: 400 }
-    );
-  }
-
-  // Call Gemini
-  try {
-    const client = createGeminiClient(apiKey);
-    const analysis = await analyzeIntelligence(client, body.context, body.query.trim());
-
-    return NextResponse.json(
+    // Gemini fallback (limited — no graph access)
+    const geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
       {
-        analysis,
-        model: 'gemini-2.0-flash',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        headers: {
-          'X-RateLimit-Remaining': String(rateCheck.remaining),
-        },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `You are an intelligence analyst. Answer this query using the provided context.\n\nQuery: ${query}\n\nContext: ${JSON.stringify(context || {}).slice(0, 4000)}` }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+        }),
       }
     );
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown Gemini API error';
 
-    // Detect specific Gemini error types
-    if (message.includes('API_KEY_INVALID') || message.includes('API key not valid')) {
-      return NextResponse.json(
-        { error: 'Invalid Gemini API key. Please check your configuration.', code: 'INVALID_KEY' },
-        { status: 401 }
-      );
+    if (!geminiResponse.ok) {
+      const err = await geminiResponse.text();
+      return NextResponse.json({ error: `Gemini error: ${err}`, code: 'GEMINI_ERROR' }, { status: 502 });
     }
 
-    if (message.includes('RESOURCE_EXHAUSTED') || message.includes('quota')) {
-      return NextResponse.json(
-        {
-          error: 'Gemini API quota exhausted. Try again later or provide your own API key.',
-          code: 'QUOTA_EXHAUSTED',
-        },
-        { status: 429 }
-      );
-    }
+    const geminiData = await geminiResponse.json();
+    const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
 
-    if (message.includes('SAFETY')) {
-      return NextResponse.json(
-        {
-          error: 'Response blocked by Gemini safety filters. Try rephrasing your query.',
-          code: 'SAFETY_BLOCKED',
-        },
-        { status: 422 }
-      );
-    }
+    return NextResponse.json({
+      analysis: text + '\n\n*⚠ Running in fallback mode (Gemini only). Start GZM backend for full graph-powered analysis.*',
+      model: 'gemini-2.0-flash (fallback)',
+      timestamp: new Date().toISOString(),
+      source: 'gemini_fallback',
+    });
 
-    console.error('[THIRD EYE AI] Analysis error:', message);
+  } catch (error) {
+    console.error('[AI Route] Error:', error);
     return NextResponse.json(
-      { error: 'Intelligence analysis failed. Please try again.', code: 'ANALYSIS_FAILED' },
+      { error: (error as Error).message || 'Internal error', code: 'INTERNAL' },
       { status: 500 }
     );
   }
