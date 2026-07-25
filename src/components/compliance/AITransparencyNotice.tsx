@@ -1,66 +1,64 @@
 'use client';
 
 /**
- * AI Transparency Notice
+ * EU AI Act Article 50 Transparency Notices.
  *
- * Covers EU AI Act Article 50 style disclosure needs:
- * - user is interacting with an AI system
- * - output may be AI-generated or AI-assisted
- * - analyst review disclaimer for high-consequence use
+ * Applies from 2 Aug 2026 for EU users interacting with AI systems.
+ * Requirements addressed:
+ * - Inform users when they interact with AI
+ * - Label AI-generated content
+ * - Add machine/human review context
  *
- * This is not just EU fluff. It is good product hygiene.
+ * This is a pragmatic UI layer, not the full legal program.
  */
 
-interface AITransparencyNoticeProps {
-  mode?: 'chat' | 'summary' | 'report' | 'recommendation';
+import { ReactNode } from 'react';
+
+export function AIInteractionBanner({
+  compact = false,
+}: {
   compact?: boolean;
+}) {
+  return (
+    <div
+      role="note"
+      aria-label="AI interaction disclosure"
+      className={`ai-transparency-banner ${compact ? 'ai-transparency-banner-compact' : ''}`}
+    >
+      <strong>AI disclosure:</strong> You are interacting with an AI-assisted system.
+      Outputs may be incomplete or wrong and should be analyst-reviewed before operational use.
+    </div>
+  );
 }
 
-const MODE_COPY: Record<string, { title: string; body: string }> = {
-  chat: {
-    title: 'AI interaction notice',
-    body: 'You are interacting with an AI system. Responses may be inaccurate, incomplete, or outdated and should be reviewed by a human analyst before operational use.',
-  },
-  summary: {
-    title: 'AI-generated summary',
-    body: 'This summary was generated or assisted by AI from available data sources. Verify important claims before making operational, legal, or procurement decisions.',
-  },
-  report: {
-    title: 'AI-assisted report',
-    body: 'This report contains AI-generated or AI-assisted content. It is intended to support analyst workflows, not replace expert review.',
-  },
-  recommendation: {
-    title: 'AI-generated recommendation',
-    body: 'This recommendation was generated with AI assistance. Validate assumptions, sources, and outputs before acting on it.',
-  },
-};
-
-export function AITransparencyNotice({
-  mode = 'summary',
-  compact = false,
-}: AITransparencyNoticeProps) {
-  const copy = MODE_COPY[mode] ?? MODE_COPY.summary;
-
-  if (compact) {
-    return (
-      <div
-        role="note"
-        aria-label={copy.title}
-        className="ai-transparency-notice ai-transparency-notice-compact"
-      >
-        <strong>AI:</strong> {copy.body}
-      </div>
-    );
-  }
-
+export function AIGeneratedLabel({
+  children,
+  type = 'summary',
+}: {
+  children: ReactNode;
+  type?: 'summary' | 'report' | 'recommendation' | 'analysis';
+}) {
   return (
-    <aside
-      role="note"
-      aria-labelledby="ai-transparency-title"
-      className="ai-transparency-notice"
+    <section
+      aria-labelledby="ai-generated-heading"
+      className="ai-generated-block"
     >
-      <h3 id="ai-transparency-title">{copy.title}</h3>
-      <p>{copy.body}</p>
-    </aside>
+      <div className="ai-generated-meta">
+        <span className="ai-generated-chip">AI-generated {type}</span>
+        <span className="ai-generated-subtext">
+          Analyst verification recommended
+        </span>
+      </div>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+export function AIReviewDisclaimer() {
+  return (
+    <p className="ai-review-disclaimer">
+      This content was generated or assisted by AI. Do not treat it as conclusive intelligence,
+      legal advice, or operational direction without human review.
+    </p>
   );
 }
