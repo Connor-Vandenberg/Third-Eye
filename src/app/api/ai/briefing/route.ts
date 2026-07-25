@@ -1,52 +1,57 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { GZM_API_URL } from '@/lib/gzm-config';
-
 /**
- * POST /api/ai/briefing
+ * AI Briefing API Route — Proxies to GZM Backend /aip/brief
  * 
- * Generates a proactive intelligence brief from the GZM backend.
- * Uses gap detection, signal correlation, and LLM synthesis.
+ * Generates proactive intelligence briefings from live graph data.
  */
+
+import { NextRequest, NextResponse } from 'next/server';
+
+const GZM_API = process.env.GZM_API_URL || 'http://localhost:8000';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { context, region } = body as { context?: Record<string, unknown>; region?: string };
+    const { region } = body as { region?: string };
 
-    // Call GZM backend brief generation
-    const response = await fetch(`${GZM_API_URL}/aip/brief`, {
+    const response = await fetch(`${GZM_API}/aip/brief`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ region: region || null }),
+      body: JSON.stringify({ region }),
+      signal: AbortSignal.timeout(120_000),
     });
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Backend unreachable');
+      const error = await response.json().catch(() => ({ detail: 'Backend error' }));
       return NextResponse.json(
-        { error: `GZM backend error: ${errorText}`, code: 'BACKEND_ERROR' },
+        { error: error.detail || `Backend returned ${response.status}`, code: 'BACKEND_ERROR' },
         { status: response.status }
       );
     }
 
-    const result = await response.json();
+    const data = await response.json();
 
-    // Transform to match format AiAnalyst.tsx expects for briefings
+    // Transform to match existing AiAnalyst.tsx briefing format
     return NextResponse.json({
-      briefing: result.narrative || 'No briefing generated.',
-      generatedAt: result.generated_at || new Date().toISOString(),
-      // Extra context
-      title: result.title,
-      priority: result.priority,
-      entities_involved: result.entities_involved,
-      gaps_identified: result.gaps_identified,
-      recommended_actions: result.recommended_actions,
-      confidence: result.confidence,
+      briefing: data.narrative,
+      generatedAt: data.generated_at || new Date().toISOString(),
+      // Additional GZM-specific data
+      gzm: {
+        title: data.title,
+        priority: data.priority,
+        category: data.category,
+        entities_involved: data.entities_involved,
+        signals_correlated: data.signals_correlated,
+        gaps_identified: data.gaps_identified,
+        recommended_actions: data.recommended_actions,
+        confidence: data.confidence,
+      },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : 'Briefing generation failed';
     
     if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
       return NextResponse.json(
-        { error: 'GZM backend is not running. Start it with: uvicorn api.app:app --reload --port 8000', code: 'BACKEND_OFFLINE' },
+        { error: 'GZM backend not running. Start with: uvicorn api.app:app --port 8000', code: 'BACKEND_OFFLINE' },
         { status: 503 }
       );
     }

@@ -1,66 +1,84 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { GZM_API_URL } from '@/lib/gzm-config';
-
 /**
- * POST /api/ai/analyze
+ * AI Analyze API Route — Proxies to GZM Backend /aip/query
  * 
- * Proxies intelligence queries to the GZM backend AIP engine.
- * This replaces the old Gemini-direct call with the full 70+ tool
- * multi-step reasoning engine.
+ * This Next.js API route forwards intelligence queries to the
+ * GZM FastAPI backend's AIP Intelligence Engine.
+ * 
+ * The backend handles:
+ * - Multi-step reasoning with tool calling
+ * - TigerGraph queries across 14.9M vertices
+ * - 70+ tools (graph queries, algorithms, ISR tasking)
+ * - LLM synthesis (Claude/GPT/Ollama)
  */
+
+import { NextRequest, NextResponse } from 'next/server';
+
+const GZM_API = process.env.GZM_API_URL || 'http://localhost:8000';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { query, context } = body as { query: string; context?: Record<string, unknown> };
+    const { query, context } = body;
 
-    if (!query?.trim()) {
-      return NextResponse.json({ error: 'Query is required' }, { status: 400 });
+    if (!query || typeof query !== 'string') {
+      return NextResponse.json(
+        { error: 'Query is required', code: 'MISSING_QUERY' },
+        { status: 400 }
+      );
     }
 
-    // Call GZM backend AIP engine
-    const response = await fetch(`${GZM_API_URL}/aip/query`, {
+    // Forward to GZM backend AIP engine
+    const response = await fetch(`${GZM_API}/aip/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query: query.trim(),
+        query,
         context: context || {},
         include_raw: false,
       }),
+      signal: AbortSignal.timeout(120_000),
     });
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Backend unreachable');
+      const error = await response.json().catch(() => ({ detail: 'Backend error' }));
       return NextResponse.json(
-        { error: `GZM backend error: ${errorText}`, code: 'BACKEND_ERROR' },
+        { error: error.detail || `Backend returned ${response.status}`, code: 'BACKEND_ERROR' },
         { status: response.status }
       );
     }
 
-    const result = await response.json();
+    const data = await response.json();
 
-    // Transform to match the format AiAnalyst.tsx expects
+    // Transform to match existing AiAnalyst.tsx expected format
     return NextResponse.json({
-      analysis: result.narrative || 'No analysis generated.',
-      model: result.model_used || 'GZM AIP Engine',
-      timestamp: result.timestamp || new Date().toISOString(),
-      // Extra fields the frontend can use
-      confidence: result.confidence,
-      entities_found: result.entities_found,
-      connections_found: result.connections_found,
-      follow_ups: result.follow_up_suggestions,
-      tokens_used: result.tokens_used,
-      intent: result.intent,
+      analysis: data.narrative,
+      model: data.model_used || 'gzm-aip',
+      timestamp: new Date().toISOString(),
+      // Additional GZM-specific data
+      gzm: {
+        intent: data.intent,
+        entities_found: data.entities_found,
+        connections_found: data.connections_found,
+        confidence: data.confidence,
+        tokens_used: data.tokens_used,
+        follow_ups: data.follow_up_suggestions,
+        graph_result: data.graph_result,
+      },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : 'Analysis failed';
     
-    // If backend is unreachable, give a helpful error
+    if (message.includes('abort') || message.includes('timeout')) {
+      return NextResponse.json(
+        { error: 'Analysis timed out. The backend may be processing a complex query.', code: 'TIMEOUT' },
+        { status: 504 }
+      );
+    }
+
+    // If backend is unreachable, return clear error
     if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
       return NextResponse.json(
-        {
-          error: 'GZM backend is not running. Start it with: uvicorn api.app:app --reload --port 8000',
-          code: 'BACKEND_OFFLINE',
-        },
+        { error: 'GZM backend not running. Start with: uvicorn api.app:app --port 8000', code: 'BACKEND_OFFLINE' },
         { status: 503 }
       );
     }

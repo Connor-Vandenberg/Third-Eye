@@ -1,79 +1,116 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { GZM_WS_URL } from './gzm-config';
+import { GZM_CONFIG } from './gzm-config';
 
-export interface RealtimeSignal {
+interface RealtimeMessage {
   type: string;
-  signal?: Record<string, unknown>;
-  alert?: Record<string, unknown>;
-  timestamp: string;
+  [key: string]: unknown;
 }
 
-export interface UseRealtimeOptions {
-  userId?: string;
-  displayName?: string;
+interface UseRealtimeOptions {
+  userId: string;
+  displayName: string;
   role?: string;
-  onSignal?: (signal: RealtimeSignal) => void;
-  onAlert?: (alert: RealtimeSignal) => void;
-  onPresenceChange?: (users: Record<string, unknown>[]) => void;
+  onSignal?: (signal: RealtimeMessage) => void;
+  onAlert?: (alert: RealtimeMessage) => void;
+  onPresenceChange?: (users: unknown[]) => void;
+  onAnnotation?: (annotation: RealtimeMessage) => void;
+  onChatMessage?: (message: RealtimeMessage) => void;
   autoReconnect?: boolean;
 }
 
-export function useRealtime(options: UseRealtimeOptions = {}) {
-  const {
-    userId = `analyst_${Date.now()}`,
-    displayName = 'Analyst',
-    role = 'analyst',
-    onSignal,
-    onAlert,
-    onPresenceChange,
-    autoReconnect = true,
-  } = options;
+interface UseRealtimeReturn {
+  isConnected: boolean;
+  onlineUsers: unknown[];
+  send: (message: RealtimeMessage) => void;
+  moveCursor: (position: { lat: number; lng: number }) => void;
+  selectEntity: (entityId: string) => void;
+  sendChat: (message: string) => void;
+  addAnnotation: (params: { entity_id?: string; text: string; type?: string }) => void;
+  disconnect: () => void;
+}
 
-  const [connected, setConnected] = useState(false);
-  const [signals, setSignals] = useState<RealtimeSignal[]>([]);
-  const [onlineUsers, setOnlineUsers] = useState<Record<string, unknown>[]>([]);
+/**
+ * Real-time collaboration and signal WebSocket hook.
+ * 
+ * Connects to the GZM backend WebSocket at /collab/ws/{userId}
+ * Receives:
+ * - Live convergence signals (signal_fire)
+ * - Alert broadcasts (alert_broadcast) 
+ * - Presence updates (presence_join/leave)
+ * - Chat messages
+ * - Annotation updates
+ * - Threat board changes
+ */
+export function useRealtime(options: UseRealtimeOptions): UseRealtimeReturn {
+  const { userId, displayName, role = 'analyst', onSignal, onAlert, onPresenceChange, onAnnotation, onChatMessage, autoReconnect = true } = options;
+  
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState<unknown[]>([]);
 
   const connect = useCallback(() => {
-    const wsUrl = `${GZM_WS_URL}/collab/ws/${userId}?name=${encodeURIComponent(displayName)}&role=${role}`;
+    const wsUrl = `${GZM_CONFIG.WS_URL}/collab/ws/${userId}?name=${encodeURIComponent(displayName)}&role=${role}`;
     
     try {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setConnected(true);
+        setIsConnected(true);
         console.log('[GZM] WebSocket connected');
+        // Start heartbeat
+        const heartbeat = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'presence_heartbeat' }));
+          } else {
+            clearInterval(heartbeat);
+          }
+        }, 30_000);
       };
 
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data) as RealtimeSignal & { online_users?: Record<string, unknown>[]; type: string };
+          const msg: RealtimeMessage = JSON.parse(event.data);
           
-          if (data.type === 'signal_fire') {
-            setSignals(prev => [data, ...prev].slice(0, 100));
-            onSignal?.(data);
-          } else if (data.type === 'alert_broadcast') {
-            onAlert?.(data);
-          } else if (data.type === 'state_sync' || data.type === 'presence_join' || data.type === 'presence_leave') {
-            if (data.online_users) {
-              setOnlineUsers(data.online_users);
-              onPresenceChange?.(data.online_users);
-            }
+          switch (msg.type) {
+            case 'state_sync':
+              setOnlineUsers(msg.online_users as unknown[] || []);
+              break;
+            case 'presence_join':
+            case 'presence_leave':
+              // Refresh presence
+              onPresenceChange?.(msg.online_users as unknown[] || onlineUsers);
+              break;
+            case 'signal_fire':
+              onSignal?.(msg);
+              break;
+            case 'alert_broadcast':
+              onAlert?.(msg);
+              break;
+            case 'annotation_add':
+            case 'annotation_reply':
+              onAnnotation?.(msg);
+              break;
+            case 'chat_message':
+              onChatMessage?.(msg);
+              break;
+            case 'pong':
+              // Server acknowledged heartbeat
+              break;
           }
         } catch (e) {
-          console.warn('[GZM] Failed to parse WebSocket message:', e);
+          console.warn('[GZM] Failed to parse WS message:', e);
         }
       };
 
       ws.onclose = () => {
-        setConnected(false);
+        setIsConnected(false);
         console.log('[GZM] WebSocket disconnected');
         if (autoReconnect) {
-          reconnectTimeoutRef.current = setTimeout(connect, 3000);
+          reconnectTimer.current = setTimeout(connect, 3000);
         }
       };
 
@@ -83,49 +120,45 @@ export function useRealtime(options: UseRealtimeOptions = {}) {
     } catch (e) {
       console.warn('[GZM] WebSocket connection failed:', e);
       if (autoReconnect) {
-        reconnectTimeoutRef.current = setTimeout(connect, 5000);
+        reconnectTimer.current = setTimeout(connect, 5000);
       }
     }
-  }, [userId, displayName, role, onSignal, onAlert, onPresenceChange, autoReconnect]);
+  }, [userId, displayName, role, autoReconnect, onSignal, onAlert, onPresenceChange, onAnnotation, onChatMessage, onlineUsers]);
 
   useEffect(() => {
     connect();
     return () => {
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
     };
   }, [connect]);
 
-  const sendMessage = useCallback((type: string, data: Record<string, unknown> = {}) => {
+  const send = useCallback((message: RealtimeMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type, ...data }));
+      wsRef.current.send(JSON.stringify(message));
     }
   }, []);
 
-  const sendCursorPosition = useCallback((lat: number, lng: number) => {
-    sendMessage('cursor_move', { position: { lat, lng } });
-  }, [sendMessage]);
+  const moveCursor = useCallback((position: { lat: number; lng: number }) => {
+    send({ type: 'cursor_move', position });
+  }, [send]);
 
   const selectEntity = useCallback((entityId: string) => {
-    sendMessage('entity_select', { entity_id: entityId });
-  }, [sendMessage]);
-
-  const addAnnotation = useCallback((entityId: string, text: string, type = 'note') => {
-    sendMessage('annotation_add', { entity_id: entityId, text, annotation_type: type });
-  }, [sendMessage]);
+    send({ type: 'entity_select', entity_id: entityId });
+  }, [send]);
 
   const sendChat = useCallback((message: string) => {
-    sendMessage('chat_message', { message });
-  }, [sendMessage]);
+    send({ type: 'chat_message', message });
+  }, [send]);
 
-  return {
-    connected,
-    signals,
-    onlineUsers,
-    sendMessage,
-    sendCursorPosition,
-    selectEntity,
-    addAnnotation,
-    sendChat,
-  };
+  const addAnnotation = useCallback((params: { entity_id?: string; text: string; type?: string }) => {
+    send({ type: 'annotation_add', ...params, annotation_type: params.type || 'note' });
+  }, [send]);
+
+  const disconnect = useCallback(() => {
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    wsRef.current?.close();
+  }, []);
+
+  return { isConnected, onlineUsers, send, moveCursor, selectEntity, sendChat, addAnnotation, disconnect };
 }
