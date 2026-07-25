@@ -1,52 +1,39 @@
-/**
- * Signals API Route — Proxies to GZM /aip/signals.
- * Returns active convergence signals for the dashboard.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
+import { GZM_API_URL } from '@/lib/gzm-config';
 
-const GZM_BACKEND = process.env.GZM_BACKEND_URL || 'http://localhost:8000';
-
+/**
+ * GET /api/ai/signals
+ * 
+ * Fetches active convergence signals from the GZM backend.
+ * Used by the frontend for real-time signal display.
+ */
 export async function GET(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
-  const hours_back = parseInt(params.get('hours_back') || '24');
-  const min_severity = parseFloat(params.get('min_severity') || '0.4');
-  const limit = parseInt(params.get('limit') || '50');
-
   try {
-    const resp = await fetch(`${GZM_BACKEND}/aip/signals`, {
+    const { searchParams } = new URL(request.url);
+    const hoursBack = parseInt(searchParams.get('hours_back') || '24');
+    const minSeverity = parseFloat(searchParams.get('min_severity') || '0.4');
+    const limit = parseInt(searchParams.get('limit') || '50');
+
+    const response = await fetch(`${GZM_API_URL}/aip/signals`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hours_back, min_severity, limit }),
-      signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ hours_back: hoursBack, min_severity: minSeverity, limit }),
     });
 
-    if (resp.ok) {
-      const data = await resp.json();
-      return NextResponse.json(data);
+    if (!response.ok) {
+      return NextResponse.json(
+        { error: 'Failed to fetch signals from GZM backend' },
+        { status: response.status }
+      );
     }
 
-    return NextResponse.json({ signals: [], total_count: 0, by_severity: {}, by_type: {}, narrative: 'Backend offline' }, { status: 200 });
-  } catch {
-    return NextResponse.json({ signals: [], total_count: 0, by_severity: {}, by_type: {}, narrative: 'Connection failed' }, { status: 200 });
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const resp = await fetch(`${GZM_BACKEND}/aip/signals`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (resp.ok) {
-      return NextResponse.json(await resp.json());
-    }
-    return NextResponse.json({ signals: [], total_count: 0 }, { status: 200 });
-  } catch {
-    return NextResponse.json({ signals: [], total_count: 0 }, { status: 200 });
+    const result = await response.json();
+    return NextResponse.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json(
+      { error: message, signals: [], total_count: 0 },
+      { status: 500 }
+    );
   }
 }

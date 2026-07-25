@@ -1,56 +1,59 @@
-/**
- * Intelligence Briefing API Route — Proxies to GZM /aip/brief.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
+import { GZM_API_URL } from '@/lib/gzm-config';
 
-const GZM_BACKEND = process.env.GZM_BACKEND_URL || 'http://localhost:8000';
-
+/**
+ * POST /api/ai/briefing
+ * 
+ * Generates a proactive intelligence brief from the GZM backend.
+ * Uses gap detection, signal correlation, and LLM synthesis.
+ */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const region = (body as Record<string, unknown>).region as string | undefined;
+    const { context, region } = body as { context?: Record<string, unknown>; region?: string };
 
-    // Try GZM backend
-    try {
-      const resp = await fetch(`${GZM_BACKEND}/aip/brief`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ region }),
-        signal: AbortSignal.timeout(60000),
-      });
+    // Call GZM backend brief generation
+    const response = await fetch(`${GZM_API_URL}/aip/brief`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ region: region || null }),
+    });
 
-      if (resp.ok) {
-        const data = await resp.json();
-        
-        let briefing = `# ${data.title || 'Intelligence Brief'}\n\n`;
-        briefing += data.narrative || 'No briefing generated.';
-        
-        if (data.entities_involved?.length > 0) {
-          briefing += '\n\n### Key Entities\n' + data.entities_involved.map((e: string) => `- ${e}`).join('\n');
-        }
-        if (data.gaps_identified?.length > 0) {
-          briefing += '\n\n### Intelligence Gaps\n' + data.gaps_identified.map((g: string) => `- ${g}`).join('\n');
-        }
-        if (data.recommended_actions?.length > 0) {
-          briefing += '\n\n### Recommended Actions\n' + data.recommended_actions.map((a: string) => `- ${a}`).join('\n');
-        }
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Backend unreachable');
+      return NextResponse.json(
+        { error: `GZM backend error: ${errorText}`, code: 'BACKEND_ERROR' },
+        { status: response.status }
+      );
+    }
 
-        return NextResponse.json({
-          briefing,
-          generatedAt: data.generated_at || new Date().toISOString(),
-          source: 'gzm_backend',
-        });
-      }
-    } catch (e) {
-      console.warn('[Briefing Route] Backend unreachable:', (e as Error).message);
+    const result = await response.json();
+
+    // Transform to match format AiAnalyst.tsx expects for briefings
+    return NextResponse.json({
+      briefing: result.narrative || 'No briefing generated.',
+      generatedAt: result.generated_at || new Date().toISOString(),
+      // Extra context
+      title: result.title,
+      priority: result.priority,
+      entities_involved: result.entities_involved,
+      gaps_identified: result.gaps_identified,
+      recommended_actions: result.recommended_actions,
+      confidence: result.confidence,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    
+    if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
+      return NextResponse.json(
+        { error: 'GZM backend is not running. Start it with: uvicorn api.app:app --reload --port 8000', code: 'BACKEND_OFFLINE' },
+        { status: 503 }
+      );
     }
 
     return NextResponse.json(
-      { error: 'GZM backend offline. Start with: uvicorn api.app:app --port 8000', code: 'NO_BACKEND' },
-      { status: 503 }
+      { error: message, code: 'INTERNAL_ERROR' },
+      { status: 500 }
     );
-  } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
