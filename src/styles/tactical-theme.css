@@ -1,0 +1,141 @@
+/**
+ * GZM Tactical Dark Theme
+ * Pitch black background, high-contrast neon accents.
+ * Designed for dark ops center displays.
+ * No white backgrounds anywhere.
+ * MIL-STD-2525D inspired symbology colors.
+ */
+
+:root {
+  /* Background hierarchy */
+  --gzm-bg-primary: #000000;
+  --gzm-bg-secondary: #0a0a0a;
+  --gzm-bg-tertiary: #111111;
+  --gzm-bg-elevated: #1a1a1a;
+  --gzm-bg-overlay: rgba(0, 0, 0, 0.90);
+
+  /* Borders */
+  --gzm-border: #2a2a2a;
+  --gzm-border-focus: #3a3a3a;
+
+  /* Text hierarchy */
+  --gzm-text-primary: #ffffff;
+  --gzm-text-secondary: #a0a0a0;
+  --gzm-text-tertiary: #666666;
+  --gzm-text-muted: #444444;
+
+  /* INT domain colors (neon accents) */
+  --gzm-osint: #4287f5;
+  --gzm-geoint: #ff9800;
+  --gzm-sigint: #9c27b0;
+  --gzm-masint: #f44336;
+  --gzm-humint: #4caf50;
+  --gzm-cyber: #00e5ff;
+  --gzm-infoops: #ffeb3b;
+  --gzm-elint: #e91e63;
+  --gzm-imint: #795548;
+  --gzm-financial: #ffc107;
+
+  /* Status colors */
+  --gzm-status-ok: #4caf50;
+  --gzm-status-warn: #ff9800;
+  --gzm-status-critical: #f44336;
+  --gzm-status-info: #00e5ff;
+
+  /* Convergence ramp */
+  --gzm-convergence-low: #4caf50;
+  --gzm-convergence-mid: #ffeb3b;
+  --gzm-convergence-high: #ff9800;
+  --gzm-convergence-critical: #f44336;
+
+  /* Glow effects */
+  --gzm-glow-cyan: 0 0 10px rgba(0, 229, 255, 0.3);
+  --gzm-glow-red: 0 0 10px rgba(244, 67, 54, 0.3);
+  --gzm-glow-green: 0 0 10px rgba(76, 175, 80, 0.3);
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out forwards;
+}
+
+/* Scrollbar styling (dark) */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--gzm-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--gzm-border);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gzm-border-focus);
+}
+
+/* Map container override */
+.maplibregl-map {
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+.maplibregl-ctrl-attrib {
+  display: none !important;
+}
+
+/* Remove MapLibre default controls styling */
+.maplibregl-ctrl-group {
+  background: var(--gzm-bg-overlay) !important;
+  border: 1px solid var(--gzm-border) !important;
+  border-radius: 4px !important;
+}
+
+.maplibregl-ctrl-group button {
+  background-color: transparent !important;
+  border-color: var(--gzm-border) !important;
+}
+
+.maplibregl-ctrl-group button:hover {
+  background-color: var(--gzm-bg-elevated) !important;
+}
+
+/* deck.gl tooltip override */
+.deck-tooltip {
+  background: var(--gzm-bg-overlay) !important;
+  border: 1px solid var(--gzm-border) !important;
+  color: var(--gzm-text-primary) !important;
+  font-size: 11px !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  padding: 6px 10px !important;
+  border-radius: 4px !important;
+  backdrop-filter: blur(8px);
+}
