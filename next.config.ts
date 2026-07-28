@@ -17,12 +17,12 @@ const nextConfig: NextConfig = {
 
   // Environment variables available at build time
   env: {
-    NEXT_PUBLIC_GZM_API_URL: process.env.NEXT_PUBLIC_GZM_API_URL || 'http://localhost:8080',
+    NEXT_PUBLIC_GZM_API_URL: process.env.NEXT_PUBLIC_GZM_API_URL || 'http://localhost:8000',
     NEXT_PUBLIC_GZM_MCP_URL: process.env.NEXT_PUBLIC_GZM_MCP_URL || 'http://localhost:8090',
     NEXT_PUBLIC_GZM_GEOINT_URL: process.env.NEXT_PUBLIC_GZM_GEOINT_URL || 'http://localhost:8083',
     NEXT_PUBLIC_GZM_ISR_URL: process.env.NEXT_PUBLIC_GZM_ISR_URL || 'http://localhost:8087',
     NEXT_PUBLIC_GZM_REPORTING_URL: process.env.NEXT_PUBLIC_GZM_REPORTING_URL || 'http://localhost:8086',
-    NEXT_PUBLIC_GZM_WS_URL: process.env.NEXT_PUBLIC_GZM_WS_URL || 'ws://localhost:9090/ws',
+    NEXT_PUBLIC_GZM_WS_URL: process.env.NEXT_PUBLIC_GZM_WS_URL || 'ws://localhost:8000',
   },
 
   // Webpack configuration for CesiumJS + Web Workers + WASM
@@ -95,16 +95,16 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'api.mapbox.com' },
       { protocol: 'https', hostname: '*.tile.openstreetmap.org' },
     ],
-    unoptimized: true, // Static export compatibility
+    unoptimized: true,
   },
 
   // Experimental features
-  experimental: {
-    // Turbopack for faster dev builds
-    turbo: {
-      rules: {
-        '*.worker.ts': ['worker-loader'],
-      },
+  experimental: {},
+
+  // Turbopack config (moved from experimental.turbo in Next.js 16)
+  turbopack: {
+    rules: {
+      '*.worker.ts': ['worker-loader'],
     },
   },
 };
