@@ -1,211 +1,205 @@
+'use client';
+
 /**
- * GZM Backend Client — Unified API interface.
- * 
- * Connects the Third-Eye frontend to ALL GZM backend endpoints:
- * - /aip/query (natural language intelligence queries)
- * - /aip/signals (convergence signals)
- * - /aip/brief (intelligence briefings)
- * - /aip/autonomous (autonomous reasoning cycle)
- * - /aip/entity (entity lookup)
- * - /aip/health (system health)
- * - /aip/tools (available AI tools)
- * - /aip/gaps (intelligence gaps)
- * - /provenance/trace/{id} (data lineage)
- * - /actions/execute (writeback actions)
- * - /collab/* (collaboration)
+ * GZM Backend API Client
+ * Typed client for all GZM backend services with circuit breaker pattern.
+ * Connects to: API (8080), MCP (8090), GEOINT, ISR (8087), Reporting (8086)
  */
 
-import { GZM_CONFIG } from './gzm-config';
+const GZM_API = process.env.NEXT_PUBLIC_GZM_API_URL || 'http://localhost:8080';
+const GZM_MCP = process.env.NEXT_PUBLIC_GZM_MCP_URL || 'http://localhost:8090';
+const GZM_GEOINT = process.env.NEXT_PUBLIC_GZM_GEOINT_URL || 'http://localhost:8083';
+const GZM_ISR = process.env.NEXT_PUBLIC_GZM_ISR_URL || 'http://localhost:8087';
+const GZM_REPORTING = process.env.NEXT_PUBLIC_GZM_REPORTING_URL || 'http://localhost:8086';
+const GZM_WS = process.env.NEXT_PUBLIC_GZM_WS_URL || 'ws://localhost:9090/ws';
 
-interface AIPQueryRequest {
-  query: string;
-  context?: Record<string, unknown>;
-  provider?: 'claude' | 'openai' | 'ollama';
-  model?: string;
-  max_graph_depth?: number;
-  include_raw?: boolean;
+// Circuit breaker state
+interface CircuitState {
+  failures: number;
+  lastFailure: number;
+  state: 'closed' | 'open' | 'half-open';
 }
 
-interface AIPQueryResponse {
-  narrative: string;
-  intent: string;
-  graph_result: {
-    vertices: unknown[];
-    edges: unknown[];
-    statistics: Record<string, unknown>;
-    query_used: string;
-    execution_ms: number;
-  };
-  entities_found: number;
-  connections_found: number;
-  signals_detected: unknown[];
-  follow_up_suggestions: string[];
-  confidence: number;
-  provider_used: string;
-  model_used: string;
-  tokens_used: number;
+const circuits: Record<string, CircuitState> = {};
+
+function getCircuit(service: string): CircuitState {
+  if (!circuits[service]) {
+    circuits[service] = { failures: 0, lastFailure: 0, state: 'closed' };
+  }
+  const c = circuits[service];
+  if (c.state === 'open' && Date.now() - c.lastFailure > 30000) {
+    c.state = 'half-open';
+  }
+  return c;
 }
 
-interface SignalResponse {
-  signals: unknown[];
-  total_count: number;
-  by_severity: Record<string, number>;
-  by_type: Record<string, number>;
-  narrative: string;
-}
+async function gzmFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  const service = new URL(url).origin;
+  const circuit = getCircuit(service);
 
-interface BriefResponse {
-  title: string;
-  priority: number;
-  category: string;
-  narrative: string;
-  entities_involved: string[];
-  signals_correlated: string[];
-  gaps_identified: string[];
-  recommended_actions: string[];
-  confidence: number;
-  generated_at: string;
-}
+  if (circuit.state === 'open') {
+    throw new Error(`Circuit open for ${service}`);
+  }
 
-interface HealthResponse {
-  status: string;
-  llm_providers: Record<string, boolean>;
-  tigergraph: boolean;
-  schema: { loaded: boolean; vertices: number; edges: number };
-  tools_registered: number;
-  capabilities: Record<string, boolean>;
-}
-
-async function gzmFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${GZM_CONFIG.API_URL}${endpoint}`;
-  
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), GZM_CONFIG.TIMEOUT);
-  
   try {
-    const response = await fetch(url, {
+    const res = await fetch(url, {
       ...options,
-      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        ...options.headers,
+        ...options?.headers,
       },
+      signal: AbortSignal.timeout(60000),
     });
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new Error(error.detail || `GZM API error: ${response.status}`);
-    }
-    
-    return await response.json() as T;
-  } finally {
-    clearTimeout(timeout);
+
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+    circuit.failures = 0;
+    circuit.state = 'closed';
+    return res.json();
+  } catch (err) {
+    circuit.failures++;
+    circuit.lastFailure = Date.now();
+    if (circuit.failures >= 5) circuit.state = 'open';
+    throw err;
   }
 }
 
-/** Send a natural language query to the GZM Intelligence Engine */
-export async function queryIntelligence(request: AIPQueryRequest): Promise<AIPQueryResponse> {
-  return gzmFetch<AIPQueryResponse>('/aip/query', {
+// ============================================================================
+// API ENDPOINTS
+// ============================================================================
+
+export interface H3Cell {
+  hex: string;
+  score: number;
+  signals: number;
+  top_int: string;
+  lat: number;
+  lng: number;
+}
+
+export interface SignalEvent {
+  id: string;
+  type: 'signal' | 'entity_move' | 'alert' | 'prediction';
+  timestamp: string;
+  lat: number;
+  lng: number;
+  int_domain: string;
+  confidence: number;
+  convergence_score: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface ISRAsset {
+  id: string;
+  name: string;
+  type: 'drone' | 'satellite' | 'ground_sensor' | 'ship' | 'aircraft';
+  status: 'ready' | 'busy' | 'maintenance';
+  lat: number;
+  lng: number;
+  coverage_radius_km: number;
+  capabilities: string[];
+}
+
+export interface ISRTaskRequest {
+  target_hex: string;
+  target_lat: number;
+  target_lng: number;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  asset_id: string;
+  collection_type: string;
+  duration_minutes: number;
+}
+
+export interface ISRTaskResponse {
+  task_id: string;
+  status: 'accepted' | 'queued' | 'rejected';
+  eta_minutes: number;
+  asset_name: string;
+}
+
+export interface EntityDetail {
+  id: string;
+  name: string;
+  type: string;
+  confidence: number;
+  first_seen: string;
+  last_seen: string;
+  lat: number;
+  lng: number;
+  int_domains: string[];
+  relationships: { target: string; type: string; weight: number }[];
+  signals: SignalEvent[];
+}
+
+export interface PredictionResult {
+  id: string;
+  hypothesis: string;
+  confidence: number;
+  horizon_hours: number;
+  lat: number;
+  lng: number;
+  brier_score: number | null;
+  resolved: boolean;
+}
+
+// H3 Convergence Heatmap
+export async function fetchConvergenceHeatmap(resolution = 6, hours = 24): Promise<H3Cell[]> {
+  return gzmFetch<H3Cell[]>(
+    `${GZM_API}/api/h3/convergence?resolution=${resolution}&hours=${hours}`
+  );
+}
+
+// Entity details
+export async function fetchEntityDetail(entityId: string): Promise<EntityDetail> {
+  return gzmFetch<EntityDetail>(`${GZM_API}/api/entities/${entityId}`);
+}
+
+// Map data (all entities with positions)
+export async function fetchMapEntities(bbox?: [number, number, number, number]): Promise<SignalEvent[]> {
+  const params = bbox ? `?bbox=${bbox.join(',')}` : '';
+  return gzmFetch<SignalEvent[]>(`${GZM_API}/api/map/entities${params}`);
+}
+
+// ISR Assets
+export async function fetchISRAssets(): Promise<ISRAsset[]> {
+  return gzmFetch<ISRAsset[]>(`${GZM_ISR}/api/assets`);
+}
+
+// Task ISR
+export async function taskISR(request: ISRTaskRequest): Promise<ISRTaskResponse> {
+  return gzmFetch<ISRTaskResponse>(`${GZM_ISR}/api/task`, {
     method: 'POST',
     body: JSON.stringify(request),
   });
 }
 
-/** Get active convergence signals */
-export async function getSignals(params: {
-  min_severity?: number;
-  hours_back?: number;
-  limit?: number;
-  region?: string;
-} = {}): Promise<SignalResponse> {
-  return gzmFetch<SignalResponse>('/aip/signals', {
+// Predictions
+export async function fetchPredictions(hours = 72): Promise<PredictionResult[]> {
+  return gzmFetch<PredictionResult[]>(`${GZM_API}/api/predictions?hours=${hours}`);
+}
+
+// GEOINT NL Query
+export async function queryGEOINT(query: string, sessionId?: string) {
+  return gzmFetch(`${GZM_GEOINT}/query`, {
     method: 'POST',
-    body: JSON.stringify({
-      min_severity: params.min_severity ?? 0.4,
-      hours_back: params.hours_back ?? 48,
-      limit: params.limit ?? 50,
-      region: params.region,
-    }),
+    body: JSON.stringify({ query, session_id: sessionId || '' }),
   });
 }
 
-/** Generate an intelligence briefing */
-export async function generateBrief(region?: string): Promise<BriefResponse> {
-  return gzmFetch<BriefResponse>('/aip/brief', {
-    method: 'POST',
-    body: JSON.stringify({ region }),
-  });
+// Health check
+export async function checkHealth(): Promise<{ status: string; services: Record<string, boolean> }> {
+  return gzmFetch(`${GZM_API}/health`);
 }
 
-/** Run autonomous reasoning cycle */
-export async function runAutonomous(): Promise<Record<string, unknown>> {
-  return gzmFetch('/aip/autonomous', { method: 'POST' });
-}
+// WebSocket URL export
+export const WS_URL = GZM_WS;
 
-/** Get system health */
-export async function getHealth(): Promise<HealthResponse> {
-  return gzmFetch<HealthResponse>('/aip/health');
-}
-
-/** Get intelligence gaps */
-export async function getGaps(staleness_hours = 72): Promise<Record<string, unknown>> {
-  return gzmFetch(`/aip/gaps?staleness_hours=${staleness_hours}`, { method: 'POST' });
-}
-
-/** Get provenance lineage for an entity */
-export async function getProvenance(entityId: string): Promise<Record<string, unknown>> {
-  return gzmFetch(`/provenance/trace/${entityId}`);
-}
-
-/** Execute a writeback action */
-export async function executeAction(params: {
-  action_type: string;
-  target_entity: string;
-  parameters?: Record<string, unknown>;
-  priority?: string;
-}): Promise<Record<string, unknown>> {
-  return gzmFetch('/actions/execute', {
-    method: 'POST',
-    body: JSON.stringify(params),
-  });
-}
-
-/** Invoke a specific AIP tool */
-export async function invokeTool(toolName: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  return gzmFetch(`/aip/tool/${toolName}`, {
-    method: 'POST',
-    body: JSON.stringify(args),
-  });
-}
-
-/** Get available tools */
-export async function getTools(): Promise<Record<string, unknown>> {
-  return gzmFetch('/aip/tools');
-}
-
-/** Get online users from collaboration */
-export async function getPresence(): Promise<Record<string, unknown>> {
-  return gzmFetch('/collab/presence');
-}
-
-/** Get graph schema */
-export async function getSchema(): Promise<Record<string, unknown>> {
-  return gzmFetch('/aip/schema');
-}
-
-export const gzmClient = {
-  queryIntelligence,
-  getSignals,
-  generateBrief,
-  runAutonomous,
-  getHealth,
-  getGaps,
-  getProvenance,
-  executeAction,
-  invokeTool,
-  getTools,
-  getPresence,
-  getSchema,
-};
-
-export default gzmClient;
+// Export base URLs for direct use
+export const ENDPOINTS = {
+  API: GZM_API,
+  MCP: GZM_MCP,
+  GEOINT: GZM_GEOINT,
+  ISR: GZM_ISR,
+  REPORTING: GZM_REPORTING,
+  WS: GZM_WS,
+} as const;
