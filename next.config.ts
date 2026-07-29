@@ -2,6 +2,11 @@ import type { NextConfig } from 'next';
 
 /**
  * Next.js Configuration for GZM Third-Eye
+ * 
+ * API PROXY: All /api/* requests are proxied to GZM backend (port 8000).
+ * This eliminates CORS issues entirely during development.
+ * Frontend calls: fetch('/api/health') -> proxied to http://localhost:8000/health
+ * 
  * Optimized for:
  * - CesiumJS (static assets, WASM workers)
  * - deck.gl (WebGPU/WebGL2)
@@ -9,10 +14,10 @@ import type { NextConfig } from 'next';
  * - Large binary data streaming
  */
 
+const GZM_BACKEND = process.env.NEXT_PUBLIC_GZM_API_URL || 'http://localhost:8000';
+
 const nextConfig: NextConfig = {
   output: 'standalone',
-
-  // Enable React strict mode
   reactStrictMode: true,
 
   // Environment variables available at build time
@@ -25,10 +30,59 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_GZM_WS_URL: process.env.NEXT_PUBLIC_GZM_WS_URL || 'ws://localhost:8000',
   },
 
+  // API PROXY: Route all /api/* calls to GZM FastAPI backend
+  // This means the frontend can just fetch('/api/health') without worrying about CORS
+  async rewrites() {
+    return [
+      // Map endpoints
+      { source: '/api/map/:path*', destination: `${GZM_BACKEND}/map/:path*` },
+      // ISR/tasking endpoints
+      { source: '/api/isr/:path*', destination: `${GZM_BACKEND}/isr/:path*` },
+      // AIP intelligence tools
+      { source: '/api/aip/:path*', destination: `${GZM_BACKEND}/aip/:path*` },
+      // H3 convergence heatmap
+      { source: '/api/h3/:path*', destination: `${GZM_BACKEND}/api/h3/:path*` },
+      // Predictions + conformal
+      { source: '/api/predictions/:path*', destination: `${GZM_BACKEND}/api/predictions/:path*` },
+      // Contagion/spillover
+      { source: '/api/contagion/:path*', destination: `${GZM_BACKEND}/api/contagion/:path*` },
+      // Intervention simulator
+      { source: '/api/simulate/:path*', destination: `${GZM_BACKEND}/api/simulate/:path*` },
+      // Briefs
+      { source: '/api/briefs', destination: `${GZM_BACKEND}/regen/briefs` },
+      // Cases
+      { source: '/api/cases', destination: `${GZM_BACKEND}/cases` },
+      // Agents
+      { source: '/api/agents/:path*', destination: `${GZM_BACKEND}/agents/:path*` },
+      // Mesh
+      { source: '/api/mesh/:path*', destination: `${GZM_BACKEND}/mesh/:path*` },
+      // Demo endpoint
+      { source: '/api/demo', destination: `${GZM_BACKEND}/demo` },
+      // AOI dashboard
+      { source: '/api/aoi/:path*', destination: `${GZM_BACKEND}/aoi/:path*` },
+      // Health + stats
+      { source: '/api/health', destination: `${GZM_BACKEND}/health` },
+      { source: '/api/stats', destination: `${GZM_BACKEND}/stats` },
+      { source: '/api/ready', destination: `${GZM_BACKEND}/ready` },
+      // Innovation engines
+      { source: '/api/innovation/:path*', destination: `${GZM_BACKEND}/api/innovation/:path*` },
+      // Watchlist
+      { source: '/api/watchlist/:path*', destination: `${GZM_BACKEND}/api/watchlist/:path*` },
+      // Entity relationships (arcs layer)
+      { source: '/api/entity-relationships', destination: `${GZM_BACKEND}/map/entity-relationships` },
+      // Ingest + confirm
+      { source: '/api/ingest', destination: `${GZM_BACKEND}/ingest` },
+      { source: '/api/confirm', destination: `${GZM_BACKEND}/confirm` },
+      // DARPA demo
+      { source: '/api/darpa-demo', destination: `${GZM_BACKEND}/demo` },
+      // Catch-all for any other backend routes
+      { source: '/backend/:path*', destination: `${GZM_BACKEND}/:path*` },
+    ];
+  },
+
   // Webpack configuration for CesiumJS + Web Workers + WASM
   webpack: (config, { isServer }) => {
     if (!isServer) {
-      // CesiumJS: Copy static assets (workers, images, etc.)
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,
@@ -68,17 +122,14 @@ const nextConfig: NextConfig = {
       {
         source: '/(.*)',
         headers: [
-          // Required for SharedArrayBuffer (Web Workers with transfer)
           { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
           { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
-          // Security headers
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
         ],
       },
       {
-        // CesiumJS static assets (allow cross-origin for ion tiles)
         source: '/Cesium/:path*',
         headers: [
           { key: 'Cross-Origin-Resource-Policy', value: 'cross-origin' },
@@ -98,10 +149,8 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
 
-  // Experimental features
   experimental: {},
 
-  // Turbopack config (moved from experimental.turbo in Next.js 16)
   turbopack: {
     rules: {
       '*.worker.ts': ['worker-loader'],
